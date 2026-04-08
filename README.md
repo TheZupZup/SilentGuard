@@ -83,3 +83,6 @@ Feel free to open a PR or issue on either platform.
 
 Early developpement-actively improving
 
+## Branding
+
+The name "SilentGuard" and associated branding may not be used without permission.
