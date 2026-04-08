@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Optional
+from pathlib import Path
+import json
 import ipaddress
 import psutil
+
+RULES_FILE = Path.home() / ".silentguard_rules.json"
+DEFAULT_KNOWN_PROCESSES = {"firefox", "brave", "chrome", "code", "python3", "python"}
 
 
 @dataclass
@@ -14,6 +19,31 @@ class ConnectionInfo:
     remote_port: int
     status: str
     trust: str
+
+
+def load_rules() -> dict:
+    if not RULES_FILE.exists():
+        return {
+            "known_processes": sorted(DEFAULT_KNOWN_PROCESSES),
+            "trusted_ips": [],
+            "blocked_ips": [],
+        }
+
+    try:
+        with open(RULES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {
+            "known_processes": sorted(DEFAULT_KNOWN_PROCESSES),
+            "trusted_ips": [],
+            "blocked_ips": [],
+        }
+
+    return {
+        "known_processes": data.get("known_processes", sorted(DEFAULT_KNOWN_PROCESSES)),
+        "trusted_ips": data.get("trusted_ips", []),
+        "blocked_ips": data.get("blocked_ips", []),
+    }
 
 
 def classify_ip(ip: str) -> str:
@@ -30,6 +60,10 @@ def classify_ip(ip: str) -> str:
 
 def get_outgoing_connections() -> List[ConnectionInfo]:
     results: List[ConnectionInfo] = []
+    rules = load_rules()
+    known_processes = {str(p).lower() for p in rules.get("known_processes", [])}
+    trusted_ips = {str(ip) for ip in rules.get("trusted_ips", [])}
+    blocked_ips = {str(ip) for ip in rules.get("blocked_ips", [])}
 
     for conn in psutil.net_connections(kind="inet"):
         if not conn.raddr:
@@ -46,9 +80,12 @@ def get_outgoing_connections() -> List[ConnectionInfo]:
 
         trust = classify_ip(conn.raddr.ip)
 
-        if process_name.lower() in {"firefox", "brave", "chrome", "code", "python3", "python"}:
-            if trust == "Unknown":
-                trust = "Known"
+        if conn.raddr.ip in blocked_ips:
+            trust = "Blocked"
+        elif conn.raddr.ip in trusted_ips:
+            trust = "Known"
+        elif process_name.lower() in known_processes and trust == "Unknown":
+            trust = "Known"
 
         results.append(
             ConnectionInfo(
