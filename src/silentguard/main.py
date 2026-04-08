@@ -1,6 +1,7 @@
 import gi
+
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib
+from gi.repository import GLib, Gtk
 
 from silentguard.monitor import get_outgoing_connections
 
@@ -43,12 +44,12 @@ class SilentGuardWindow(Gtk.Window):
         self.tree = Gtk.TreeView(model=self.store)
 
         columns = [
-                ("Process", 0),
-                ("PID", 1),
-                ("Remote IP", 2),
-                ("Port", 3),
-                ("Status", 4),
-                ("Trust", 5),
+            ("Process", 0),
+            ("PID", 1),
+            ("Remote IP", 2),
+            ("Port", 3),
+            ("Status", 4),
+            ("Trust", 5),
         ]
 
         for title_text, index in columns:
@@ -114,29 +115,26 @@ class SilentGuardWindow(Gtk.Window):
             connections = get_outgoing_connections()
 
             for conn in connections:
-                self.store.append([
-                    conn.process_name,
-                    conn.pid or 0,
-                    conn.remote_ip,
-                    conn.remote_port,
-                    conn.status,
-                    conn.trust,
-                ])
+                self.store.append(
+                    [
+                        conn.process_name,
+                        conn.pid or 0,
+                        conn.remote_ip,
+                        conn.remote_port,
+                        conn.status,
+                        conn.trust,
+                    ]
+                )
 
             self.status_label.set_text(f"Status: Monitoring ({len(connections)} connections)")
         except Exception as exc:
-            self.status_label.set_text(f"Status: Error")
+            self.status_label.set_text("Status: Error")
             self.append_log(f"Error while reading connections: {exc}")
 
         return True
 
 
-win = SilentGuardWindow()
-win.connect("destroy", Gtk.main_quit)
-win.show_all()
-Gtk.main()
-
-def main():
+def main() -> None:
     win = SilentGuardWindow()
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
