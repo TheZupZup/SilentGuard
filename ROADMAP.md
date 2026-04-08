@@ -29,7 +29,8 @@
 - Add firewall integration
 
 
-## Contributions welcome — feel free to pick an issue below or suggest improvements.
+## Contributing & Ideas
+Contributions welcome — feel free to pick an issue below or suggest improvements.
 
 - ## Good First Issues
 
