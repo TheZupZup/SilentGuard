@@ -1,6 +1,9 @@
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, DataTable, Static
 from textual.binding import Binding
+from pathlib import Path
+from datetime import datetime
+import json
 
 from silentguard.monitor import get_outgoing_connections
 from silentguard.memory import add_entry, remove_entry, load_memory
@@ -15,6 +18,7 @@ class SilentGuardTUI(App):
         Binding("b", "block", "Block IP"),
         Binding("x", "unblock", "Unblock Selected"),
         Binding("m", "toggle_memory", "Toggle Memory View"),
+        Binding("e", "export_connections", "Export JSON"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -31,6 +35,7 @@ class SilentGuardTUI(App):
         self.memory_mode = False
         self.selected_row_index = 0
         self.selected_memory_index = 0
+        self.last_connections = []
 
         self.connections_table = self.query_one("#connections_table", DataTable)
         self.memory_table = self.query_one("#memory_table", DataTable)
@@ -59,6 +64,7 @@ class SilentGuardTUI(App):
 
         try:
             connections = get_outgoing_connections()
+            self.last_connections = connections
 
             if self.show_unknown_only:
                 connections = [c for c in connections if c.trust == "Unknown"]
@@ -70,6 +76,8 @@ class SilentGuardTUI(App):
                     trust = f"[red]{trust}[/red]"
                 elif trust == "Local":
                     trust = f"[yellow]{trust}[/yellow]"
+                elif trust == "Blocked":
+                    trust = f"[bold red]{trust}[/bold red]"
                 else:
                     trust = f"[green]{trust}[/green]"
 
@@ -91,10 +99,14 @@ class SilentGuardTUI(App):
                 self.selected_row_index = 0
 
             unknown_count = sum(1 for c in connections if c.trust == "Unknown")
+            known_count = sum(1 for c in connections if c.trust == "Known")
+            local_count = sum(1 for c in connections if c.trust == "Local")
+            blocked_count = sum(1 for c in connections if c.trust == "Blocked")
 
             status.update(
                 f"Mode: Connections | Monitoring ({len(connections)} connections) | "
-                f"Unknown: {unknown_count} | Press R to refresh"
+                f"Known: {known_count} | Unknown: {unknown_count} | "
+                f"Local: {local_count} | Blocked: {blocked_count} | Press R to refresh"
                 + (" | Unknown only: ON" if self.show_unknown_only else "")
             )
 
@@ -208,6 +220,31 @@ class SilentGuardTUI(App):
                 status.update(f"Mode: Connections | Removed {ip} from memory")
         except Exception as exc:
             status.update(f"Status: Error while unblocking - {exc}")
+
+    def action_export_connections(self) -> None:
+        status = self.query_one("#status", Static)
+
+        try:
+            export_dir = Path.home() / ".silentguard_exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            export_file = export_dir / f"connections_{timestamp}.json"
+            payload = [
+                {
+                    "process_name": c.process_name,
+                    "pid": c.pid,
+                    "remote_ip": c.remote_ip,
+                    "remote_port": c.remote_port,
+                    "status": c.status,
+                    "trust": c.trust,
+                }
+                for c in self.last_connections
+            ]
+            with open(export_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            status.update(f"Mode: Connections | Exported {len(payload)} rows to {export_file}")
+        except Exception as exc:
+            status.update(f"Status: Error while exporting - {exc}")
 
     def on_data_table_row_selected(self, event) -> None:
         if event.data_table.id == "memory_table":
