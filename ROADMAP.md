@@ -29,7 +29,7 @@
 - Add firewall integration
 
 
-## Contributing & Ideas
+## Contributing
 Contributions welcome — feel free to pick an issue below or suggest improvements.
 
 - ## Good First Issues
