@@ -28,6 +28,9 @@
 - Improve trust classification
 - Add firewall integration
 
+
+## Contributions welcome — feel free to pick an issue below or suggest improvements.
+
 - ## Good First Issues
 
 - Improve TUI navigation (keyboard shortcuts)
