@@ -19,12 +19,14 @@ SilentGuard helps you visualize outgoing network connections in real time and de
 
 - Real-time monitoring of outgoing connections
 - Process → IP mapping
-- Trust classification:
+- Trust classification with local rules file (`~/.silentguard_rules.json`):
   - Known
   - Unknown
   - Local
+-  Blocked
 - Detection of new connections
 - Simple and clean GTK interface
+- TUI mode with memory actions and JSON export (`E` key)
 
 ---
 
@@ -37,28 +39,57 @@ SilentGuard helps you visualize outgoing network connections in real time and de
 ---
 ## Quick start
 
-# GitLab
-```
-git clone https://gitlab.com/TheZupZup/SilentGuard
-cd SilentGuard
-pip install psutil
-python3 main.py
-```
 # Codeberg
 ```bash
 git clone https://codeberg.org/TheZupZup/SilentGuard
 cd SilentGuard
-pip install psutil
-python3 main.py
+pip install .
+silentguard
+```
+
+# TUI (server / headless)
+```
+silentguard-tui
 ```
 ---
 
 ## How to run
 
 ```bash
-pip install psutil
-python3 main.py
+pip install .
+silentguard      # GTK GUI
+silentguard-tui  # Text UI
 ```
+
+### Server / headless quick usage
+
+```bash
+pip install .
+silentguard-tui
+```
+
+Use `E` in TUI to export the current snapshot to:
+`~/.silentguard_exports/connections_YYYYMMDD_HHMMSS.json`.
+
+### Optional refresh tuning (GUI)
+
+```bash
+SILENTGUARD_REFRESH_SECONDS=5 silentguard
+```
+
+## Rules file (optional)
+
+Create `~/.silentguard_rules.json` to customize trust classification:
+
+```json
+{
+  "known_processes": ["firefox", "python3"],
+  "trusted_ips": ["1.1.1.1"],
+  "blocked_ips": ["203.0.113.10"]
+}
+```
+
+When an IP is in `blocked_ips`, it appears as `Blocked` in the UI/TUI.
 ---
 
 ## Arch Linux (AUR - in progress)

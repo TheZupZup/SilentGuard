@@ -17,6 +17,14 @@ dependencies = [
   "textual"
 ]
 
+[project.optional-dependencies]
+gui = [
+  "PyGObject"
+]
+tui = [
+  "textual"
+]
+
 [project.scripts]
 silentguard = "silentguard.main:main"
 silentguard-tui = "silentguard.tui:main"

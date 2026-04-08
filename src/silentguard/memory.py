@@ -11,29 +11,35 @@
 import json
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 
 MEMORY_FILE = Path.home() / ".silentguard_memory.json"
 
 
-def load_memory():
+def load_memory() -> list[dict[str, Any]]:
     """Load SilentGuard memory from disk."""
     if not MEMORY_FILE.exists():
         return []
 
     try:
-        with open(MEMORY_FILE, "r") as f:
-            return json.load(f)
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+            if isinstance(loaded, list):
+                return loaded
+            return []
     except Exception:
         return []
 
 
-def save_memory(data) -> None:
+def save_memory(data: list[dict[str, Any]]) -> None:
     """Save SilentGuard memory to disk."""
-    with open(MEMORY_FILE, "w") as f:
+    tmp_file = MEMORY_FILE.with_suffix(".tmp")
+    with open(tmp_file, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    tmp_file.replace(MEMORY_FILE)
 
 
-def add_entry(action: str, target: str, reason: str = ""):
+def add_entry(action: str, target: str, reason: str = "") -> None:
     """Append a new action to memory."""
     data = load_memory()
 
@@ -48,7 +54,7 @@ def add_entry(action: str, target: str, reason: str = ""):
     save_memory(data)
 
 
-def remove_entry(target: str):
+def remove_entry(target: str) -> None:
     """Remove all entries matching a target (IP, process, etc.)."""
     data = load_memory()
     data = [entry for entry in data if entry.get("target") != target]
