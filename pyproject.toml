@@ -14,7 +14,13 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
   "psutil",
-  "textual"
+  "textual",
+  "PyGObject"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest"
 ]
 
 [project.scripts]

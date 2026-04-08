@@ -9,10 +9,12 @@
 # - future active/inactive state
 
 import json
+import logging
 from pathlib import Path
 from datetime import datetime
 
 MEMORY_FILE = Path.home() / ".silentguard_memory.json"
+LOGGER = logging.getLogger(__name__)
 
 
 def load_memory():
@@ -21,15 +23,19 @@ def load_memory():
         return []
 
     try:
-        with open(MEMORY_FILE, "r") as f:
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except json.JSONDecodeError as exc:
+        LOGGER.warning("Unable to parse memory file %s: %s", MEMORY_FILE, exc)
+        return []
+    except OSError as exc:
+        LOGGER.warning("Unable to read memory file %s: %s", MEMORY_FILE, exc)
         return []
 
 
 def save_memory(data) -> None:
     """Save SilentGuard memory to disk."""
-    with open(MEMORY_FILE, "w") as f:
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
