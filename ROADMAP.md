@@ -27,3 +27,9 @@
 - Add GTK blocked list
 - Improve trust classification
 - Add firewall integration
+
+- ## Good First Issues
+
+- Improve TUI navigation (keyboard shortcuts)
+- Add status counters in TUI
+- Improve unknown connection labeling
