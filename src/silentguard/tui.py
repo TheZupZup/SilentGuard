@@ -7,6 +7,7 @@ import json
 
 from silentguard.monitor import get_outgoing_connections
 from silentguard.memory import add_entry, remove_entry, load_memory
+from silentguard.actions import block_ip, unblock_ip, ActionError
 
 
 class SilentGuardTUI(App):
@@ -193,12 +194,12 @@ class SilentGuardTUI(App):
         try:
             row = self.connections_table.get_row_at(self.selected_row_index)
             ip = str(row[2])
-
-            add_entry("block_ip", ip, "from TUI")
-            status.update(f"Mode: Connections | Saved {ip} to memory")
+            backend = block_ip(ip)
+            add_entry("block_ip", ip, f"from TUI via {backend}")
+            status.update(f"Mode: Connections | Blocked {ip} via {backend}")
             self.refresh_memory()
-        except Exception as exc:
-            status.update(f"Status: Error while saving IP - {exc}")
+        except (ActionError, Exception) as exc:
+            status.update(f"Status: Error while blocking IP - {exc}")
 
     def action_unblock(self) -> None:
         status = self.query_one("#status", Static)
@@ -207,18 +208,18 @@ class SilentGuardTUI(App):
             if self.memory_mode:
                 row = self.memory_table.get_row_at(self.selected_memory_index)
                 target = str(row[1])
-
+                backend = unblock_ip(target)
                 remove_entry(target)
                 self.refresh_memory()
-                status.update(f"Mode: Memory | Removed {target} from memory")
+                status.update(f"Mode: Memory | Unblocked {target} via {backend}")
             else:
                 row = self.connections_table.get_row_at(self.selected_row_index)
                 ip = str(row[2])
-
+                backend = unblock_ip(ip)
                 remove_entry(ip)
                 self.refresh_memory()
-                status.update(f"Mode: Connections | Removed {ip} from memory")
-        except Exception as exc:
+                status.update(f"Mode: Connections | Unblocked {ip} via {backend}")
+        except (ActionError, Exception) as exc:
             status.update(f"Status: Error while unblocking - {exc}")
 
     def action_export_connections(self) -> None:

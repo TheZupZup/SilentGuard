@@ -70,6 +70,7 @@ silentguard-tui
 
 Use `E` in TUI to export the current snapshot to:
 `~/.silentguard_exports/connections_YYYYMMDD_HHMMSS.json`.
+Use `B` / `X` to block or unblock selected IP (requires firewall privileges).
 
 ### Optional refresh tuning (GUI)
 
@@ -90,6 +91,7 @@ Create `~/.silentguard_rules.json` to customize trust classification:
 ```
 
 When an IP is in `blocked_ips`, it appears as `Blocked` in the UI/TUI.
+If you use real firewall block/unblock from the TUI, run with adequate privileges.
 ---
 
 ## Arch Linux (AUR - in progress)
