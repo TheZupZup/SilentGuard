@@ -5,7 +5,11 @@ from pathlib import Path
 from datetime import datetime
 import json
 
-from silentguard.monitor import get_outgoing_connections
+from silentguard.monitor import (
+    get_outgoing_connections,
+    block_ip_in_rules,
+    unblock_ip_in_rules,
+)
 from silentguard.memory import add_entry, remove_entry, load_memory
 
 
@@ -15,7 +19,7 @@ class SilentGuardTUI(App):
         Binding("r", "refresh", "Refresh"),
         Binding("u", "toggle_unknown", "Toggle Unknown"),
         Binding("enter", "show_details", "Show Details"),
-        Binding("b", "block", "Block IP"),
+        Binding("b", "block", "Blocklist IP"),
         Binding("x", "unblock", "Unblock Selected"),
         Binding("m", "toggle_memory", "Toggle Memory View"),
         Binding("e", "export_connections", "Export JSON"),
@@ -195,10 +199,15 @@ class SilentGuardTUI(App):
             ip = str(row[2])
 
             add_entry("block_ip", ip, "from TUI")
-            status.update(f"Mode: Connections | Saved {ip} to memory")
+            added = block_ip_in_rules(ip)
+            if added:
+                status.update(f"Mode: Connections | Added {ip} to blocklist")
+            else:
+                status.update(f"Mode: Connections | {ip} already in blocklist")
             self.refresh_memory()
+            self.refresh_connections()
         except Exception as exc:
-            status.update(f"Status: Error while saving IP - {exc}")
+            status.update(f"Status: Error while blocklisting IP - {exc}")
 
     def action_unblock(self) -> None:
         status = self.query_one("#status", Static)
@@ -206,9 +215,12 @@ class SilentGuardTUI(App):
         try:
             if self.memory_mode:
                 row = self.memory_table.get_row_at(self.selected_memory_index)
+                action = str(row[0])
                 target = str(row[1])
 
                 remove_entry(target)
+                if action == "block_ip":
+                    unblock_ip_in_rules(target)
                 self.refresh_memory()
                 status.update(f"Mode: Memory | Removed {target} from memory")
             else:
@@ -216,8 +228,10 @@ class SilentGuardTUI(App):
                 ip = str(row[2])
 
                 remove_entry(ip)
+                unblock_ip_in_rules(ip)
                 self.refresh_memory()
-                status.update(f"Mode: Connections | Removed {ip} from memory")
+                self.refresh_connections()
+                status.update(f"Mode: Connections | Removed {ip} from blocklist")
         except Exception as exc:
             status.update(f"Status: Error while unblocking - {exc}")
 

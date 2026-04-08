@@ -23,10 +23,10 @@ SilentGuard helps you visualize outgoing network connections in real time and de
   - Known
   - Unknown
   - Local
--  Blocked
+- Blocked
 - Detection of new connections
 - Simple and clean GTK interface
-- TUI mode with memory actions and JSON export (`E` key)
+- TUI mode with memory actions, blocklist updates (`B` key), and JSON export (`E` key)
 
 ---
 
@@ -96,7 +96,7 @@ Feel free to open a PR or issue on either platform.
 
 ## Status 
 
-Early developpement-actively improving
+Early development — actively improving
 
 ## Branding
 

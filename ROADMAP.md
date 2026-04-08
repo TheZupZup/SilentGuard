@@ -6,13 +6,15 @@
 - Real-time monitoring
 - Trust classification
 - Unknown filter
+- Status counters (TUI)
+- JSON export (TUI)
 - AUR packaging
 
 ## Planned
 - Process details view
 - Better TUI navigation
-- Status counters
-- Export logs
+- GUI-side blocked list
+- Firewall integration
 
 ## Future security actions
 - Kill selected process
