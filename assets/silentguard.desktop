@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=SilentGuard
+Comment=A lightweight network and privacy monitor
+Exec=silentguard
+Icon=Icon=utilities-system-monitor
+Terminal=false
+Type=Application
+Categories=Utility;Network;System;
+StartupNotify=true

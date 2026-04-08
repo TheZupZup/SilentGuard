@@ -1,0 +1,39 @@
+pkgname=silentguard-git
+pkgver=0.1.0.r36.g78984bb
+pkgrel=1
+pkgdesc="A lightweight network and privacy monitor with smart alerts"
+arch=('any')
+url="https://codeberg.org/TheZupZup/SilentGuard"
+license=('GPL3')
+depends=(
+  'python'
+  'python-gobject'
+  'gtk3'
+  'python-psutil'
+)
+makedepends=(
+  'git'
+  'python-build'
+  'python-installer'
+  'python-setuptools'
+)
+source=("git+https://codeberg.org/TheZupZup/SilentGuard.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/SilentGuard"
+  printf "0.1.0.r%s.g%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$srcdir/SilentGuard"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "$srcdir/SilentGuard"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+
+  install -Dm644 assets/silentguard.desktop \
+    "$pkgdir/usr/share/applications/silentguard.desktop"
+}

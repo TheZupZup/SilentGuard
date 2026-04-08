@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "silentguard"
+version = "0.1.0"
+description = "A lightweight network and privacy monitor with smart alerts"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+  {name = "TheZupZup"}
+]
+requires-python = ">=3.10"
+dependencies = [
+  "psutil",
+  "textual"
+]
+
+[project.scripts]
+silentguard = "silentguard.main:main"
+silentguard-tui = "silentguard.tui:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

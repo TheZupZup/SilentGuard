@@ -1,0 +1,29 @@
+# SilentGuard Roadmap
+
+## Current
+- GTK interface
+- TUI interface
+- Real-time monitoring
+- Trust classification
+- Unknown filter
+- AUR packaging
+
+## Planned
+- Process details view
+- Better TUI navigation
+- Status counters
+- Export logs
+
+## Future security actions
+- Kill selected process
+- Local memory of actions
+- Block / unblock IPs
+- Service rules
+- Blocked items view
+
+## Contribution ideas
+- Improve TUI UX
+- Add JSON memory layer
+- Add GTK blocked list
+- Improve trust classification
+- Add firewall integration
