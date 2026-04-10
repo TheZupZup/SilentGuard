@@ -3,10 +3,7 @@
 [![Release](https://img.shields.io/badge/release-v0.1.0--alpha-blue)](https://codeberg.org/TheZupZup/SilentGuard/releases)
 [![AUR](https://img.shields.io/badge/AUR-available-blue?logo=arch-linux)](#)
 [![Python](https://img.shields.io/badge/python-3.x-blue?logo=python)](#)
-![CI](https://github.com/TheZupZup/Auryn/actions/workflows/python-app.yml/badge.svg)
-![License](https://img.shields.io/github/license/TheZupZup/Auryn)
-![Stars](https://img.shields.io/github/stars/TheZupZup/Auryn?style=social)
-![Issues](https://img.shields.io/github/issues/TheZupZup/Auryn)
+
 
 A lightweight network & privacy monitor with smart alerts.
 
