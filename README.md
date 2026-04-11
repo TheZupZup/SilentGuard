@@ -4,9 +4,7 @@
 [![AUR](https://img.shields.io/badge/AUR-available-blue?logo=arch-linux)](#)
 [![Python](https://img.shields.io/badge/python-3.x-blue?logo=python)](#)
 ![CI](https://github.com/TheZupZup/SilentGuard/actions/workflows/python-app.yml/badge.svg)
-![License](https://img.shields.io/github/license/TheZupZup/SilentGuard)
-![Stars](https://img.shields.io/github/stars/TheZupZup/SilentGuard?style=social)
-![Issues](https://img.shields.io/github/issues/TheZupZup/SilentGuard)
+
 
 
 A lightweight network & privacy monitor with smart alerts.
