@@ -1,20 +1,11 @@
-Security Policy
-Supported Versions
-Auryn is under active development.
+# Security Policy
 
-Version	Supported
-Latest (main)	✅
-Older versions	❌
-Reporting a Vulnerability
-If you find a security issue, please open a GitHub issue.
+## Reporting a Vulnerability
 
-This project is open-source and early-stage, so reports are public for now to allow transparency and community help.
+If you discover a security vulnerability, please report it responsibly.
 
-Please include:
+At this time, there is no dedicated private reporting channel. Please open a GitHub issue and clearly mark it with [SECURITY].
 
-a clear description of the issue
-steps to reproduce it
-logs or screenshots if possible
-If you want to contribute a fix, feel free to open a pull request.
+Avoid including sensitive details publicly if possible. We will work on improving this process in the future.
 
-Thanks for helping improve SilentGuard 🙏
+Thank you for helping improve the security of SilentGuard.
