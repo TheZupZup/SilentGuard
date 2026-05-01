@@ -433,9 +433,27 @@ class SilentGuardTUI(App):
 
         self.action_show_details()
 
+    def _update_rules_status_for_selection(self) -> None:
+        if not self.rules_mode:
+            return
+        status = self.query_one("#status", Static)
+        idx = self.selected_rules_index
+        if idx < 0 or idx >= len(self._rules_row_types):
+            return
+        row_type, value = self._rules_row_types[idx]
+        if row_type == "blocked_ip":
+            status.update(f"Selected blocked IP: {value} — press U to unblock")
+        elif row_type == "trusted_ip":
+            status.update(f"Selected trusted IP: {value}")
+        elif row_type == "known_process":
+            status.update(f"Selected known process: {value}")
+        else:
+            status.update("Mode: Rules | Press L to return")
+
     def on_data_table_cursor_moved(self, event) -> None:
         if event.data_table.id == "rules_table":
             self.selected_rules_index = event.cursor_row
+            self._update_rules_status_for_selection()
             return
         if event.data_table.id == "memory_table":
             self.selected_memory_index = event.cursor_row
