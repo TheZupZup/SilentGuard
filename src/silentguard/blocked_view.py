@@ -1,23 +1,8 @@
 """
 blocked_view.py
 
-Future UI/TUI view for blocked items.
+The rules view (blocked IPs, trusted IPs, known processes) is implemented
+directly in tui.py as a third DataTable toggled by the L key binding.
 
-Planned features:
-- show blocked IPs
-- show killed processes history
-- show timestamps and reasons
-- allow unblock actions
-- maybe support both GUI and TUI later
-
-Ideas for contributors:
-- TUI blocked list
-- GTK blocked tab
-- unblock workflow
+Data source: load_rules() from monitor.py → ~/.silentguard_rules.json
 """
-
-# TODO:
-# - Design TUI blocked list
-# - Design GUI blocked tab
-# - Connect with memory.py
-# - Add unblock actions
