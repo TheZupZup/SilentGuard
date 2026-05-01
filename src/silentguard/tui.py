@@ -48,6 +48,9 @@ class SilentGuardTUI(App):
         self.last_connections = []
         self._kill_pending_pid: int | None = None
 
+        self.selected_rules_index = 0
+        self._rules_row_types: list[tuple[str, str]] = []
+
         self.connections_table = self.query_one("#connections_table", DataTable)
         self.memory_table = self.query_one("#memory_table", DataTable)
         self.rules_table = self.query_one("#rules_table", DataTable)
@@ -158,12 +161,45 @@ class SilentGuardTUI(App):
         self.refresh_memory()
 
     def action_toggle_unknown(self) -> None:
-        if self.memory_mode or self.rules_mode:
+        if self.rules_mode:
+            self._unblock_from_rules_view()
+            return
+
+        if self.memory_mode:
             return
 
         self.show_unknown_only = not self.show_unknown_only
         self.selected_row_index = 0
         self.refresh_connections()
+
+    def _unblock_from_rules_view(self) -> None:
+        status = self.query_one("#status", Static)
+        idx = self.selected_rules_index
+        if idx >= len(self._rules_row_types):
+            return
+        row_type, value = self._rules_row_types[idx]
+        if row_type != "blocked_ip":
+            status.update(
+                "Mode: Rules | Select a Blocked IP row to unblock | Press L to return"
+            )
+            return
+        removed = unblock_ip_in_rules(value)
+        if removed:
+            remove_entry(value)
+            self.refresh_memory()
+            rules = self.refresh_rules()
+            blocked = len(rules.get("blocked_ips", []))
+            trusted = len(rules.get("trusted_ips", []))
+            known = len(rules.get("known_processes", []))
+            status.update(
+                f"Mode: Rules | Unblocked {value} | "
+                f"Blocked IPs: {blocked} | Trusted IPs: {trusted} | Known Processes: {known} | "
+                f"U to unblock selected blocked IP | Press L to return"
+            )
+        else:
+            status.update(
+                f"Mode: Rules | {value} was not in blocklist | Press L to return"
+            )
 
     def action_toggle_memory(self) -> None:
         if self.rules_mode:
@@ -188,6 +224,7 @@ class SilentGuardTUI(App):
     def refresh_rules(self) -> dict:
         table = self.rules_table
         table.clear()
+        self._rules_row_types = []
 
         rules = load_rules()
         blocked = rules.get("blocked_ips", [])
@@ -195,26 +232,37 @@ class SilentGuardTUI(App):
         known = rules.get("known_processes", [])
 
         table.add_row(f"[bold red]Blocked IPs ({len(blocked)})[/bold red]", "")
+        self._rules_row_types.append(("header", ""))
         for ip in blocked:
             table.add_row("  [bold red]Blocked IP[/bold red]", str(ip))
+            self._rules_row_types.append(("blocked_ip", str(ip)))
         if not blocked:
             table.add_row("  [dim](none)[/dim]", "")
+            self._rules_row_types.append(("empty", ""))
 
         table.add_row("", "")
+        self._rules_row_types.append(("spacer", ""))
 
         table.add_row(f"[green]Trusted IPs ({len(trusted)})[/green]", "")
+        self._rules_row_types.append(("header", ""))
         for ip in trusted:
             table.add_row("  [green]Trusted IP[/green]", str(ip))
+            self._rules_row_types.append(("trusted_ip", str(ip)))
         if not trusted:
             table.add_row("  [dim](none)[/dim]", "")
+            self._rules_row_types.append(("empty", ""))
 
         table.add_row("", "")
+        self._rules_row_types.append(("spacer", ""))
 
         table.add_row(f"[yellow]Known Processes ({len(known)})[/yellow]", "")
+        self._rules_row_types.append(("header", ""))
         for proc in known:
             table.add_row("  [yellow]Known Process[/yellow]", str(proc))
+            self._rules_row_types.append(("known_process", str(proc)))
         if not known:
             table.add_row("  [dim](none)[/dim]", "")
+            self._rules_row_types.append(("empty", ""))
 
         return rules
 
@@ -229,16 +277,17 @@ class SilentGuardTUI(App):
             self.memory_table.display = False
             self.rules_table.display = True
             self.memory_mode = False
+            self.selected_rules_index = 0
             rules = self.refresh_rules()
             blocked = len(rules.get("blocked_ips", []))
             trusted = len(rules.get("trusted_ips", []))
             known = len(rules.get("known_processes", []))
             status.update(
-                f"Mode: Rules (read-only) | "
+                f"Mode: Rules | "
                 f"Blocked IPs: {blocked} | Trusted IPs: {trusted} | Known Processes: {known} | "
-                f"Press L to return"
+                f"U to unblock selected blocked IP | Press L to return"
             )
-            details.update("Rules: read-only view of blocked IPs, trusted IPs, and known processes")
+            details.update("Rules: select a Blocked IP row and press U to unblock")
         else:
             self.rules_table.display = False
             self.connections_table.display = True
@@ -375,6 +424,7 @@ class SilentGuardTUI(App):
 
     def on_data_table_row_selected(self, event) -> None:
         if event.data_table.id == "rules_table":
+            self.selected_rules_index = event.cursor_row
             return
         if event.data_table.id == "memory_table":
             self.selected_memory_index = event.cursor_row
@@ -385,6 +435,7 @@ class SilentGuardTUI(App):
 
     def on_data_table_cursor_moved(self, event) -> None:
         if event.data_table.id == "rules_table":
+            self.selected_rules_index = event.cursor_row
             return
         if event.data_table.id == "memory_table":
             self.selected_memory_index = event.cursor_row
