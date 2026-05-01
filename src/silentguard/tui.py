@@ -450,9 +450,30 @@ class SilentGuardTUI(App):
         else:
             status.update("Mode: Rules | Press L to return")
 
+    def _find_actionable_rules_row(self, start: int, direction: int) -> int | None:
+        actionable = {"blocked_ip", "trusted_ip", "known_process"}
+        n = len(self._rules_row_types)
+        idx = start
+        while 0 <= idx < n:
+            if self._rules_row_types[idx][0] in actionable:
+                return idx
+            idx += direction
+        return None
+
     def on_data_table_cursor_moved(self, event) -> None:
         if event.data_table.id == "rules_table":
-            self.selected_rules_index = event.cursor_row
+            new_idx = event.cursor_row
+            actionable = {"blocked_ip", "trusted_ip", "known_process"}
+            if 0 <= new_idx < len(self._rules_row_types) and \
+                    self._rules_row_types[new_idx][0] not in actionable:
+                direction = 1 if new_idx >= self.selected_rules_index else -1
+                target = self._find_actionable_rules_row(new_idx, direction)
+                if target is not None and target != new_idx:
+                    self.selected_rules_index = target
+                    self.rules_table.move_cursor(row=target, column=0)
+                    self._update_rules_status_for_selection()
+                    return
+            self.selected_rules_index = new_idx
             self._update_rules_status_for_selection()
             return
         if event.data_table.id == "memory_table":
