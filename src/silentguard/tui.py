@@ -9,6 +9,7 @@ from silentguard.monitor import (
     get_outgoing_connections,
     block_ip_in_rules,
     unblock_ip_in_rules,
+    load_rules,
 )
 from silentguard.memory import add_entry, remove_entry, load_memory
 from silentguard.actions import kill_process
@@ -24,6 +25,7 @@ class SilentGuardTUI(App):
         Binding("x", "unblock", "Unblock Selected"),
         Binding("k", "kill_process", "Kill Process"),
         Binding("m", "toggle_memory", "Toggle Memory View"),
+        Binding("l", "toggle_rules", "Rules View"),
         Binding("e", "export_connections", "Export JSON"),
     ]
 
@@ -33,12 +35,14 @@ class SilentGuardTUI(App):
         yield Static("Status: Ready | Press R to refresh", id="status")
         yield DataTable(id="connections_table")
         yield DataTable(id="memory_table")
+        yield DataTable(id="rules_table")
         yield Static("Details: Press Enter on a row", id="details_full")
         yield Footer()
 
     def on_mount(self) -> None:
         self.show_unknown_only = False
         self.memory_mode = False
+        self.rules_mode = False
         self.selected_row_index = 0
         self.selected_memory_index = 0
         self.last_connections = []
@@ -46,9 +50,11 @@ class SilentGuardTUI(App):
 
         self.connections_table = self.query_one("#connections_table", DataTable)
         self.memory_table = self.query_one("#memory_table", DataTable)
+        self.rules_table = self.query_one("#rules_table", DataTable)
 
         self.connections_table.cursor_type = "row"
         self.memory_table.cursor_type = "row"
+        self.rules_table.cursor_type = "row"
 
         self.connections_table.add_columns(
             "Process", "PID", "Remote IP", "Port", "Status", "Trust"
@@ -56,11 +62,14 @@ class SilentGuardTUI(App):
         self.memory_table.add_columns(
             "Action", "Target", "Reason", "Timestamp"
         )
+        self.rules_table.add_columns("Category", "Value")
 
         self.refresh_connections()
         self.refresh_memory()
+        self.refresh_rules()
 
         self.memory_table.display = False
+        self.rules_table.display = False
 
     def refresh_connections(self) -> None:
         status = self.query_one("#status", Static)
@@ -149,7 +158,7 @@ class SilentGuardTUI(App):
         self.refresh_memory()
 
     def action_toggle_unknown(self) -> None:
-        if self.memory_mode:
+        if self.memory_mode or self.rules_mode:
             return
 
         self.show_unknown_only = not self.show_unknown_only
@@ -157,6 +166,8 @@ class SilentGuardTUI(App):
         self.refresh_connections()
 
     def action_toggle_memory(self) -> None:
+        if self.rules_mode:
+            return
         status = self.query_one("#status", Static)
         details = self.query_one("#details_full", Static)
 
@@ -170,6 +181,46 @@ class SilentGuardTUI(App):
             details.update("Details: Press Enter on a memory row")
         else:
             self.memory_table.display = False
+            self.connections_table.display = True
+            self.refresh_connections()
+            details.update("Details: Press Enter on a row")
+
+    def refresh_rules(self) -> None:
+        table = self.rules_table
+        table.clear()
+
+        rules = load_rules()
+
+        for ip in rules.get("blocked_ips", []):
+            table.add_row("[bold red]Blocked IP[/bold red]", str(ip))
+        for ip in rules.get("trusted_ips", []):
+            table.add_row("[green]Trusted IP[/green]", str(ip))
+        for proc in rules.get("known_processes", []):
+            table.add_row("[yellow]Known Process[/yellow]", str(proc))
+
+    def action_toggle_rules(self) -> None:
+        status = self.query_one("#status", Static)
+        details = self.query_one("#details_full", Static)
+
+        self.rules_mode = not self.rules_mode
+
+        if self.rules_mode:
+            self.connections_table.display = False
+            self.memory_table.display = False
+            self.rules_table.display = True
+            self.memory_mode = False
+            self.refresh_rules()
+            blocked = len(load_rules().get("blocked_ips", []))
+            trusted = len(load_rules().get("trusted_ips", []))
+            known = len(load_rules().get("known_processes", []))
+            status.update(
+                f"Mode: Rules (read-only) | "
+                f"Blocked IPs: {blocked} | Trusted IPs: {trusted} | Known Processes: {known} | "
+                f"Press L to return"
+            )
+            details.update("Rules: read-only view of blocked IPs, trusted IPs, and known processes")
+        else:
+            self.rules_table.display = False
             self.connections_table.display = True
             self.refresh_connections()
             details.update("Details: Press Enter on a row")
@@ -193,7 +244,7 @@ class SilentGuardTUI(App):
             details.update("Details: None")
 
     def action_block(self) -> None:
-        if self.memory_mode:
+        if self.memory_mode or self.rules_mode:
             return
 
         status = self.query_one("#status", Static)
@@ -214,7 +265,7 @@ class SilentGuardTUI(App):
             status.update(f"Status: Error while blocklisting IP - {exc}")
 
     def action_kill_process(self) -> None:
-        if self.memory_mode:
+        if self.memory_mode or self.rules_mode:
             return
 
         status = self.query_one("#status", Static)
@@ -248,6 +299,8 @@ class SilentGuardTUI(App):
         status.update(f"Kill: {message}")
 
     def action_unblock(self) -> None:
+        if self.rules_mode:
+            return
         status = self.query_one("#status", Static)
 
         try:
@@ -274,6 +327,8 @@ class SilentGuardTUI(App):
             status.update(f"Status: Error while unblocking - {exc}")
 
     def action_export_connections(self) -> None:
+        if self.rules_mode:
+            return
         status = self.query_one("#status", Static)
 
         try:
@@ -299,6 +354,8 @@ class SilentGuardTUI(App):
             status.update(f"Status: Error while exporting - {exc}")
 
     def on_data_table_row_selected(self, event) -> None:
+        if event.data_table.id == "rules_table":
+            return
         if event.data_table.id == "memory_table":
             self.selected_memory_index = event.cursor_row
         else:
@@ -307,6 +364,8 @@ class SilentGuardTUI(App):
         self.action_show_details()
 
     def on_data_table_cursor_moved(self, event) -> None:
+        if event.data_table.id == "rules_table":
+            return
         if event.data_table.id == "memory_table":
             self.selected_memory_index = event.cursor_row
         else:
