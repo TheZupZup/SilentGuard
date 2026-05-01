@@ -78,6 +78,18 @@ def unblock_ip_in_rules(ip: str) -> bool:
     return True
 
 
+def untrust_ip_in_rules(ip: str) -> bool:
+    rules = load_rules()
+    trusted_ips = {str(value) for value in rules.get("trusted_ips", [])}
+    if ip not in trusted_ips:
+        return False
+
+    trusted_ips.remove(ip)
+    rules["trusted_ips"] = sorted(trusted_ips)
+    save_rules(rules)
+    return True
+
+
 def classify_ip(ip: str) -> str:
     try:
         addr = ipaddress.ip_address(ip)
