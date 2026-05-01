@@ -11,6 +11,7 @@ from silentguard.monitor import (
     unblock_ip_in_rules,
 )
 from silentguard.memory import add_entry, remove_entry, load_memory
+from silentguard.actions import kill_process
 
 
 class SilentGuardTUI(App):
@@ -21,6 +22,7 @@ class SilentGuardTUI(App):
         Binding("enter", "show_details", "Show Details"),
         Binding("b", "block", "Blocklist IP"),
         Binding("x", "unblock", "Unblock Selected"),
+        Binding("k", "kill_process", "Kill Process"),
         Binding("m", "toggle_memory", "Toggle Memory View"),
         Binding("e", "export_connections", "Export JSON"),
     ]
@@ -40,6 +42,7 @@ class SilentGuardTUI(App):
         self.selected_row_index = 0
         self.selected_memory_index = 0
         self.last_connections = []
+        self._kill_pending_pid: int | None = None
 
         self.connections_table = self.query_one("#connections_table", DataTable)
         self.memory_table = self.query_one("#memory_table", DataTable)
@@ -141,6 +144,7 @@ class SilentGuardTUI(App):
             self.selected_memory_index = 0
 
     def action_refresh(self) -> None:
+        self._kill_pending_pid = None
         self.refresh_connections()
         self.refresh_memory()
 
@@ -209,6 +213,40 @@ class SilentGuardTUI(App):
         except Exception as exc:
             status.update(f"Status: Error while blocklisting IP - {exc}")
 
+    def action_kill_process(self) -> None:
+        if self.memory_mode:
+            return
+
+        status = self.query_one("#status", Static)
+
+        try:
+            row = self.connections_table.get_row_at(self.selected_row_index)
+            pid = int(row[1])
+            process_name = str(row[0])
+        except Exception as exc:
+            status.update(f"Status: Could not read selected row — {exc}")
+            return
+
+        if pid <= 0:
+            self._kill_pending_pid = None
+            status.update("Kill: No PID available for this connection")
+            return
+
+        if self._kill_pending_pid != pid:
+            self._kill_pending_pid = pid
+            status.update(
+                f"Kill: Press K again to send SIGTERM to PID {pid} ({process_name}) — "
+                f"move cursor or press R to cancel"
+            )
+            return
+
+        self._kill_pending_pid = None
+        success, message = kill_process(pid)
+        add_entry("kill_process", str(pid), message)
+        self.refresh_memory()
+        self.refresh_connections()
+        status.update(f"Kill: {message}")
+
     def action_unblock(self) -> None:
         status = self.query_one("#status", Static)
 
@@ -273,6 +311,7 @@ class SilentGuardTUI(App):
             self.selected_memory_index = event.cursor_row
         else:
             self.selected_row_index = event.cursor_row
+            self._kill_pending_pid = None
 
 
 def main() -> None:

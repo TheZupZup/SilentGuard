@@ -20,15 +20,27 @@ Ideas for contributors:
 """
 
 # TODO:
-# - Add safe process kill function
 # - Add IP blocking backend
 # - Add unblock function
 # - Add confirmation system before dangerous actions
 
+import psutil
 
-def kill_process(pid: int) -> None:
-    """Future feature: kill a process by PID."""
-    pass
+
+def kill_process(pid: int) -> tuple[bool, str]:
+    """Send SIGTERM to a process by PID. Returns (success, user-facing message)."""
+    if pid <= 0:
+        return False, f"Invalid PID {pid} — no process to kill"
+
+    try:
+        psutil.Process(pid).terminate()
+        return True, f"Sent SIGTERM to PID {pid}"
+    except psutil.ZombieProcess:
+        return False, f"PID {pid} is a zombie process"
+    except psutil.NoSuchProcess:
+        return False, f"PID {pid} no longer exists"
+    except psutil.AccessDenied:
+        return False, f"Permission denied killing PID {pid} — try running with sudo"
 
 
 def block_ip(ip: str) -> None:
