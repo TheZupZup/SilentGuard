@@ -9,6 +9,7 @@ from silentguard.monitor import (
     get_outgoing_connections,
     block_ip_in_rules,
     unblock_ip_in_rules,
+    untrust_ip_in_rules,
     load_rules,
 )
 from silentguard.memory import add_entry, remove_entry, load_memory
@@ -26,6 +27,7 @@ class SilentGuardTUI(App):
         Binding("k", "kill_process", "Kill Process"),
         Binding("m", "toggle_memory", "Toggle Memory View"),
         Binding("l", "toggle_rules", "Rules View"),
+        Binding("t", "toggle_trust", "Toggle Trust"),
         Binding("e", "export_connections", "Export JSON"),
         Binding("h", "toggle_help", "Toggle Help"),
     ]
@@ -38,6 +40,7 @@ class SilentGuardTUI(App):
         "  [bold]M[/bold]  memory view\n"
         "  [bold]L[/bold]  rules view\n"
         "  [bold]U[/bold]  unblock selected blocked IP from rules view\n"
+        "  [bold]T[/bold]  untrust selected trusted IP from rules view\n"
         "  [bold]B[/bold]  block selected connection\n"
         "  [bold]K[/bold]  kill selected process\n"
         "  [bold]X[/bold]  unblock selected blocked connection\n"
@@ -221,6 +224,44 @@ class SilentGuardTUI(App):
         else:
             status.update(
                 f"Mode: Rules | {value} was not in blocklist | Press L to return"
+            )
+
+    def action_toggle_trust(self) -> None:
+        if not self.rules_mode:
+            return
+
+        status = self.query_one("#status", Static)
+        idx = self.selected_rules_index
+        if idx < 0 or idx >= len(self._rules_row_types):
+            status.update("Mode: Rules | Select a Trusted IP row to untrust | Press L to return")
+            return
+
+        row_type, value = self._rules_row_types[idx]
+
+        if row_type == "trusted_ip":
+            removed = untrust_ip_in_rules(value)
+            rules = self.refresh_rules()
+            blocked = len(rules.get("blocked_ips", []))
+            trusted = len(rules.get("trusted_ips", []))
+            known = len(rules.get("known_processes", []))
+            if removed:
+                status.update(
+                    f"Mode: Rules | Untrusted {value} | "
+                    f"Blocked IPs: {blocked} | Trusted IPs: {trusted} | Known Processes: {known} | "
+                    f"Press L to return"
+                )
+            else:
+                status.update(
+                    f"Mode: Rules | {value} was not in trusted IPs | Press L to return"
+                )
+        elif row_type == "blocked_ip":
+            status.update(
+                f"Mode: Rules | Blocked IPs must be unblocked before they can be trusted | "
+                f"Press L to return"
+            )
+        else:
+            status.update(
+                "Mode: Rules | Select a Trusted IP row to toggle trust | Press L to return"
             )
 
     def action_toggle_memory(self) -> None:
