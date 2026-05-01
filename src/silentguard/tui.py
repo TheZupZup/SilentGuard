@@ -27,7 +27,24 @@ class SilentGuardTUI(App):
         Binding("m", "toggle_memory", "Toggle Memory View"),
         Binding("l", "toggle_rules", "Rules View"),
         Binding("e", "export_connections", "Export JSON"),
+        Binding("h", "toggle_help", "Toggle Help"),
     ]
+
+    HELP_TEXT = (
+        "[bold]SilentGuard — Keyboard Shortcuts[/bold]\n\n"
+        "  [bold]Q[/bold]  quit\n"
+        "  [bold]R[/bold]  refresh\n"
+        "  [bold]F[/bold]  toggle unknown-only filter\n"
+        "  [bold]M[/bold]  memory view\n"
+        "  [bold]L[/bold]  rules view\n"
+        "  [bold]U[/bold]  unblock selected blocked IP from rules view\n"
+        "  [bold]B[/bold]  block selected connection\n"
+        "  [bold]K[/bold]  kill selected process\n"
+        "  [bold]X[/bold]  unblock selected blocked connection\n"
+        "  [bold]E[/bold]  export connections\n"
+        "  [bold]H[/bold]  toggle this help\n\n"
+        "[dim]Press H again to close.[/dim]"
+    )
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -37,6 +54,7 @@ class SilentGuardTUI(App):
         yield DataTable(id="memory_table")
         yield DataTable(id="rules_table")
         yield Static("Details: Press Enter on a row", id="details_full")
+        yield Static(self.HELP_TEXT, id="help_panel")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -73,6 +91,10 @@ class SilentGuardTUI(App):
 
         self.memory_table.display = False
         self.rules_table.display = False
+
+        self.help_mode = False
+        self.help_panel = self.query_one("#help_panel", Static)
+        self.help_panel.display = False
 
     def refresh_connections(self) -> None:
         status = self.query_one("#status", Static)
@@ -293,6 +315,47 @@ class SilentGuardTUI(App):
             self.connections_table.display = True
             self.refresh_connections()
             details.update("Details: Press Enter on a row")
+
+    def action_toggle_help(self) -> None:
+        status = self.query_one("#status", Static)
+        details = self.query_one("#details_full", Static)
+
+        if not self.help_mode:
+            self._pre_help_view = {
+                "connections": self.connections_table.display,
+                "memory": self.memory_table.display,
+                "rules": self.rules_table.display,
+                "details": details.display,
+            }
+            self.connections_table.display = False
+            self.memory_table.display = False
+            self.rules_table.display = False
+            details.display = False
+            self.help_panel.display = True
+            self.help_mode = True
+            status.update("Mode: Help | Press H to close")
+        else:
+            prev = getattr(self, "_pre_help_view", {})
+            self.help_panel.display = False
+            self.connections_table.display = prev.get("connections", not (self.memory_mode or self.rules_mode))
+            self.memory_table.display = prev.get("memory", self.memory_mode)
+            self.rules_table.display = prev.get("rules", self.rules_mode)
+            details.display = prev.get("details", True)
+            self.help_mode = False
+            if self.rules_mode:
+                rules = load_rules()
+                blocked = len(rules.get("blocked_ips", []))
+                trusted = len(rules.get("trusted_ips", []))
+                known = len(rules.get("known_processes", []))
+                status.update(
+                    f"Mode: Rules | "
+                    f"Blocked IPs: {blocked} | Trusted IPs: {trusted} | Known Processes: {known} | "
+                    f"U to unblock selected blocked IP | Press L to return"
+                )
+            elif self.memory_mode:
+                status.update("Mode: Memory | Use ↑ ↓ to select, X to remove entry")
+            else:
+                status.update("Mode: Connections | Press R to refresh")
 
     def action_show_details(self) -> None:
         details = self.query_one("#details_full", Static)
