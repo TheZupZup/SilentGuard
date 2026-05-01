@@ -185,18 +185,38 @@ class SilentGuardTUI(App):
             self.refresh_connections()
             details.update("Details: Press Enter on a row")
 
-    def refresh_rules(self) -> None:
+    def refresh_rules(self) -> dict:
         table = self.rules_table
         table.clear()
 
         rules = load_rules()
+        blocked = rules.get("blocked_ips", [])
+        trusted = rules.get("trusted_ips", [])
+        known = rules.get("known_processes", [])
 
-        for ip in rules.get("blocked_ips", []):
-            table.add_row("[bold red]Blocked IP[/bold red]", str(ip))
-        for ip in rules.get("trusted_ips", []):
-            table.add_row("[green]Trusted IP[/green]", str(ip))
-        for proc in rules.get("known_processes", []):
-            table.add_row("[yellow]Known Process[/yellow]", str(proc))
+        table.add_row(f"[bold red]Blocked IPs ({len(blocked)})[/bold red]", "")
+        for ip in blocked:
+            table.add_row("  [bold red]Blocked IP[/bold red]", str(ip))
+        if not blocked:
+            table.add_row("  [dim](none)[/dim]", "")
+
+        table.add_row("", "")
+
+        table.add_row(f"[green]Trusted IPs ({len(trusted)})[/green]", "")
+        for ip in trusted:
+            table.add_row("  [green]Trusted IP[/green]", str(ip))
+        if not trusted:
+            table.add_row("  [dim](none)[/dim]", "")
+
+        table.add_row("", "")
+
+        table.add_row(f"[yellow]Known Processes ({len(known)})[/yellow]", "")
+        for proc in known:
+            table.add_row("  [yellow]Known Process[/yellow]", str(proc))
+        if not known:
+            table.add_row("  [dim](none)[/dim]", "")
+
+        return rules
 
     def action_toggle_rules(self) -> None:
         status = self.query_one("#status", Static)
@@ -209,10 +229,10 @@ class SilentGuardTUI(App):
             self.memory_table.display = False
             self.rules_table.display = True
             self.memory_mode = False
-            self.refresh_rules()
-            blocked = len(load_rules().get("blocked_ips", []))
-            trusted = len(load_rules().get("trusted_ips", []))
-            known = len(load_rules().get("known_processes", []))
+            rules = self.refresh_rules()
+            blocked = len(rules.get("blocked_ips", []))
+            trusted = len(rules.get("trusted_ips", []))
+            known = len(rules.get("known_processes", []))
             status.update(
                 f"Mode: Rules (read-only) | "
                 f"Blocked IPs: {blocked} | Trusted IPs: {trusted} | Known Processes: {known} | "
