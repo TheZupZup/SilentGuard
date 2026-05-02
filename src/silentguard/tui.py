@@ -45,6 +45,7 @@ class SilentGuardTUI(App):
         "  [bold]K[/bold]  kill selected process\n"
         "  [bold]X[/bold]  unblock selected blocked connection\n"
         "  [bold]E[/bold]  export connections\n"
+        "  [bold]/[/bold]  search/filter (Rules view)\n"
         "  [bold]H[/bold]  toggle this help\n\n"
         "[dim]Press H again to close.[/dim]"
     )
@@ -71,6 +72,9 @@ class SilentGuardTUI(App):
 
         self.selected_rules_index = 0
         self._rules_row_types: list[tuple[str, str]] = []
+
+        self.search_mode = False
+        self.search_query = ""
 
         self.connections_table = self.query_one("#connections_table", DataTable)
         self.memory_table = self.query_one("#memory_table", DataTable)
@@ -284,15 +288,35 @@ class SilentGuardTUI(App):
             self.refresh_connections()
             details.update("Details: Press Enter on a row")
 
+    def _filter_rules(self, query: str, blocked: list, trusted: list, known: list):
+        if not query:
+            return blocked, trusted, known
+        q = query.lower()
+        return (
+            [ip for ip in blocked if q in str(ip).lower()],
+            [ip for ip in trusted if q in str(ip).lower()],
+            [proc for proc in known if q in str(proc).lower()],
+        )
+
     def refresh_rules(self) -> dict:
         table = self.rules_table
         table.clear()
         self._rules_row_types = []
 
         rules = load_rules()
-        blocked = rules.get("blocked_ips", [])
-        trusted = rules.get("trusted_ips", [])
-        known = rules.get("known_processes", [])
+        blocked_all = rules.get("blocked_ips", [])
+        trusted_all = rules.get("trusted_ips", [])
+        known_all = rules.get("known_processes", [])
+
+        query = self.search_query if getattr(self, "search_mode", False) else ""
+        blocked, trusted, known = self._filter_rules(
+            query, blocked_all, trusted_all, known_all
+        )
+
+        if query and not (blocked or trusted or known):
+            table.add_row("[dim](no matches)[/dim]", "")
+            self._rules_row_types.append(("empty", ""))
+            return rules
 
         table.add_row(f"[bold red]Blocked IPs ({len(blocked)})[/bold red]", "")
         self._rules_row_types.append(("header", ""))
@@ -525,6 +549,64 @@ class SilentGuardTUI(App):
             status.update(f"Mode: Connections | Exported {len(payload)} rows to {export_file}")
         except Exception as exc:
             status.update(f"Status: Error while exporting - {exc}")
+
+    def _update_search_status(self) -> None:
+        status = self.query_one("#status", Static)
+        status.update(
+            f"Mode: Rules | Search: /{self.search_query}_ | "
+            f"Type to filter | Esc or Enter to exit"
+        )
+
+    def _enter_search_mode(self) -> None:
+        if not self.rules_mode:
+            return
+        self.search_mode = True
+        self.search_query = ""
+        self.refresh_rules()
+        self._update_search_status()
+
+    def _exit_search_mode(self) -> None:
+        self.search_mode = False
+        self.search_query = ""
+        rules = self.refresh_rules()
+        status = self.query_one("#status", Static)
+        blocked = len(rules.get("blocked_ips", []))
+        trusted = len(rules.get("trusted_ips", []))
+        known = len(rules.get("known_processes", []))
+        status.update(
+            f"Mode: Rules | "
+            f"Blocked IPs: {blocked} | Trusted IPs: {trusted} | Known Processes: {known} | "
+            f"U to unblock selected blocked IP | Press L to return"
+        )
+
+    def on_key(self, event) -> None:
+        if self.search_mode:
+            key = event.key
+            if key in ("escape", "enter"):
+                self._exit_search_mode()
+                event.stop()
+                event.prevent_default()
+                return
+            if key == "backspace":
+                self.search_query = self.search_query[:-1]
+                self.refresh_rules()
+                self._update_search_status()
+                event.stop()
+                event.prevent_default()
+                return
+            char = getattr(event, "character", None)
+            if char and len(char) == 1 and char.isprintable():
+                self.search_query += char
+                self.refresh_rules()
+                self._update_search_status()
+                event.stop()
+                event.prevent_default()
+            return
+
+        if self.rules_mode and getattr(event, "character", None) == "/":
+            self._enter_search_mode()
+            event.stop()
+            event.prevent_default()
 
     def on_data_table_row_selected(self, event) -> None:
         if event.data_table.id == "rules_table":
