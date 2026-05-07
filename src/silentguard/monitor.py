@@ -54,7 +54,39 @@ def save_rules(rules: dict) -> None:
         json.dump(rules, f, indent=2)
 
 
+def is_blockable_ip(ip: str) -> tuple[bool, str | None]:
+    """Return (True, None) if ``ip`` is safe to block, otherwise (False, reason).
+
+    Refuses loopback, link-local, multicast, unspecified, reserved, and private
+    addresses (including RFC 1918 and the documentation ranges) so users cannot
+    accidentally cut themselves off from local or infrastructure traffic.
+    """
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False, f"{ip!r} is not a valid IP address"
+
+    if addr.is_loopback:
+        return False, f"{ip} is a loopback address"
+    if addr.is_link_local:
+        return False, f"{ip} is a link-local address"
+    if addr.is_multicast:
+        return False, f"{ip} is a multicast address"
+    if addr.is_unspecified:
+        return False, f"{ip} is the unspecified address"
+    if addr.is_reserved:
+        return False, f"{ip} is a reserved address"
+    if addr.is_private:
+        return False, f"{ip} is a local/private address"
+
+    return True, None
+
+
 def block_ip_in_rules(ip: str) -> bool:
+    ok, reason = is_blockable_ip(ip)
+    if not ok:
+        raise ValueError(reason)
+
     rules = load_rules()
     blocked_ips = {str(value) for value in rules.get("blocked_ips", [])}
     if ip in blocked_ips:
