@@ -450,9 +450,16 @@ class SilentGuardTUI(App):
             row = self.connections_table.get_row_at(self.selected_row_index)
             ip = str(row[2])
 
-            add_entry("block_ip", ip, "from TUI")
-            added = block_ip_in_rules(ip)
+            try:
+                added = block_ip_in_rules(ip)
+            except ValueError as guard_error:
+                status.update(
+                    f"Mode: Connections | Refused to block {ip}: {guard_error}"
+                )
+                return
+
             if added:
+                add_entry("block_ip", ip, "from TUI")
                 status.update(f"Mode: Connections | Added {ip} to blocklist")
             else:
                 status.update(f"Mode: Connections | {ip} already in blocklist")
