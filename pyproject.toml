@@ -26,6 +26,7 @@ dev = [
 [project.scripts]
 silentguard = "silentguard.main:main"
 silentguard-tui = "silentguard.tui:main"
+silentguard-api = "silentguard.api.server:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

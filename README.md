@@ -62,7 +62,44 @@ silentguard-tui
 pip install .
 silentguard      # GTK GUI
 silentguard-tui  # Text UI
+silentguard-api  # Read-only local API (optional)
 ```
+
+## Read-only local API (preview)
+
+SilentGuard ships an optional local-only HTTP API that exposes the same
+data the TUI/GUI display. It is intended as the foundation for future
+integrations (notably Nova) to consume SilentGuard state.
+
+Important properties:
+
+- **Local-only by default.** Binds to `127.0.0.1:8765`.
+- **Read-only.** Only `GET` is supported. The API never blocks IPs,
+  unblocks IPs, mutates trusted IPs, or touches the firewall.
+- **Optional.** The TUI and GUI work whether or not the API is running.
+- **No new dependencies.** Built on the Python standard library.
+
+Start it with:
+
+```bash
+silentguard-api               # http://127.0.0.1:8765
+silentguard-api --port 9000   # custom port
+```
+
+Endpoints:
+
+| Method | Path           | Purpose                                  |
+| ------ | -------------- | ---------------------------------------- |
+| GET    | `/status`      | API identity / health summary             |
+| GET    | `/connections` | Current outgoing connection snapshot     |
+| GET    | `/blocked`     | Locally-marked blocked IPs from rules    |
+| GET    | `/trusted`     | Trusted IPs from rules                   |
+| GET    | `/alerts`      | Alerts (placeholder, currently empty)    |
+
+Each endpoint returns JSON. Collections use a stable `{"items": [...]}`
+shape so future schema additions stay backwards compatible. When data is
+not yet available (for example, alerts are not implemented yet), the
+response includes `"status": "not_available"` alongside an empty list.
 
 ## Rules file (optional)
 
