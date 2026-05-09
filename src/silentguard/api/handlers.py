@@ -5,7 +5,12 @@ free of HTTP-specific concerns so the same functions can be unit-tested,
 embedded in another transport, or reused by future consumers.
 
 All handlers are read-only: they never mutate rules, memory, sockets,
-processes, or system state.
+processes, or system state. ``get_connections_summary`` does write to a
+small local cache of recently-seen unknown destinations
+(``~/.silentguard_unknown.json``) so consumers like Nova can describe
+recent unknown traffic; that cache stores only minimal, non-sensitive
+metadata (IP, process, timestamps, count, classification) and never
+leaves the local machine.
 """
 
 from __future__ import annotations
@@ -13,17 +18,22 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from silentguard.connection_state import (
+    CLASSIFICATION_PRIORITY,
+    classification_from_label,
+    record_connections,
+    recent_unknown_destinations,
+)
 from silentguard.monitor import get_outgoing_connections, load_rules
 
 LOGGER = logging.getLogger(__name__)
 
 SUMMARY_PROCESS_LIMIT = 10
 SUMMARY_REMOTE_HOST_LIMIT = 10
+SUMMARY_RECENT_UNKNOWN_LIMIT = 5
+RECENT_UNKNOWN_LIMIT = 50
 
-_KNOWN_CLASSIFICATIONS = ("local", "known", "unknown", "blocked")
-# Higher = more security-relevant. Used so a single "Unknown" hit on an IP
-# isn't masked by other connections to the same IP being labelled "Known".
-_CLASSIFICATION_PRIORITY = {"blocked": 4, "unknown": 3, "known": 2, "local": 1}
+_KNOWN_CLASSIFICATIONS = ("local", "known", "unknown", "trusted", "blocked")
 
 
 def get_status() -> dict[str, Any]:
@@ -104,7 +114,9 @@ def _empty_summary(status: str | None = None) -> dict[str, Any]:
         "local": 0,
         "known": 0,
         "unknown": 0,
+        "trusted": 0,
         "blocked": 0,
+        "recent_unknown": [],
         "by_process": [],
         "top_remote_hosts": [],
     }
@@ -113,18 +125,42 @@ def _empty_summary(status: str | None = None) -> dict[str, Any]:
     return payload
 
 
+def _classification_for(conn: Any) -> str:
+    canonical = (getattr(conn, "classification", "") or "").strip().lower()
+    if canonical in _KNOWN_CLASSIFICATIONS:
+        return canonical
+    return classification_from_label(getattr(conn, "trust", None))
+
+
+def _serialize_recent_unknown(entry: dict) -> dict[str, Any]:
+    return {
+        "ip": entry.get("ip"),
+        "process": entry.get("process"),
+        "seen_count": entry.get("seen_count"),
+        "first_seen": entry.get("first_seen"),
+        "last_seen": entry.get("last_seen"),
+        "classification": entry.get("classification", "unknown"),
+    }
+
+
 def get_connections_summary() -> dict[str, Any]:
     """Return a compact summary of current outgoing connections.
 
-    Aggregates counts by trust classification, by process name, and the
+    Aggregates counts by trust classification (``local``, ``known``,
+    ``unknown``, ``trusted``, ``blocked``), by process name, and the
     most-frequent remote IPs so consumers can describe network state
     without ingesting the full connection list. Lists are capped to keep
     the response small.
 
     The summary deliberately omits PIDs, ports, and per-connection rows
-    that ``/connections`` already exposes — this endpoint is for at-a-glance
-    overviews, not detailed inspection. No DNS resolution is performed,
-    so ``top_remote_hosts`` carries IPs only.
+    that ``/connections`` already exposes — this endpoint is for
+    at-a-glance overviews, not detailed inspection. No DNS resolution is
+    performed, so ``top_remote_hosts`` carries IPs only.
+
+    ``recent_unknown`` is sourced from the local unknown-destinations
+    cache that ``record_connections`` keeps in sync. Each entry contains
+    only non-sensitive metadata (IP, process, timestamps, count, current
+    classification) — see ``connection_state`` for the storage policy.
     """
     try:
         connections = get_outgoing_connections()
@@ -132,19 +168,14 @@ def get_connections_summary() -> dict[str, Any]:
         LOGGER.warning("get_connections_summary: monitor unavailable: %s", exc)
         return _empty_summary(status="not_available")
 
-    if not connections:
-        return _empty_summary()
-
-    counts = {"local": 0, "known": 0, "unknown": 0, "blocked": 0}
+    counts = {key: 0 for key in _KNOWN_CLASSIFICATIONS}
     process_buckets: dict[str, dict[str, Any]] = {}
     remote_buckets: dict[str, dict[str, Any]] = {}
     total = 0
 
     for conn in connections:
         total += 1
-        classification = (conn.trust or "").strip().lower()
-        if classification not in _KNOWN_CLASSIFICATIONS:
-            classification = "unknown"
+        classification = _classification_for(conn)
         counts[classification] += 1
 
         process_name = (conn.process_name or "").strip() or "unknown"
@@ -166,8 +197,8 @@ def get_connections_summary() -> dict[str, Any]:
         )
         remote["count"] += 1
         if (
-            _CLASSIFICATION_PRIORITY[classification]
-            > _CLASSIFICATION_PRIORITY[remote["classification"]]
+            CLASSIFICATION_PRIORITY[classification]
+            > CLASSIFICATION_PRIORITY[remote["classification"]]
         ):
             remote["classification"] = classification
 
@@ -180,12 +211,55 @@ def get_connections_summary() -> dict[str, Any]:
         key=lambda b: (-b["count"], b["ip"]),
     )[:SUMMARY_REMOTE_HOST_LIMIT]
 
+    try:
+        record_connections(connections)
+    except Exception as exc:
+        LOGGER.debug(
+            "get_connections_summary: cache sync skipped: %s", exc, exc_info=True
+        )
+
+    try:
+        recent_unknown = [
+            _serialize_recent_unknown(entry)
+            for entry in recent_unknown_destinations(SUMMARY_RECENT_UNKNOWN_LIMIT)
+        ]
+    except Exception as exc:
+        LOGGER.warning(
+            "get_connections_summary: unknown destinations cache unreadable: %s",
+            exc,
+        )
+        recent_unknown = []
+
+    if total == 0:
+        payload = _empty_summary()
+        payload["recent_unknown"] = recent_unknown
+        return payload
+
     return {
         "total": total,
         "local": counts["local"],
         "known": counts["known"],
         "unknown": counts["unknown"],
+        "trusted": counts["trusted"],
         "blocked": counts["blocked"],
+        "recent_unknown": recent_unknown,
         "by_process": by_process,
         "top_remote_hosts": top_remote_hosts,
     }
+
+
+def get_recent_unknown() -> dict[str, Any]:
+    """Return recently-observed unknown destinations from the local cache.
+
+    Read-only: this handler does not enumerate live sockets. It surfaces
+    the entries that ``get_connections_summary`` (or other code calling
+    ``record_connections``) has already persisted. Each entry exposes
+    only the minimal metadata documented in ``connection_state``.
+    """
+    try:
+        items = recent_unknown_destinations(RECENT_UNKNOWN_LIMIT)
+    except Exception as exc:
+        LOGGER.warning("get_recent_unknown: cache unavailable: %s", exc)
+        return {"items": [], "status": "not_available"}
+
+    return {"items": [_serialize_recent_unknown(entry) for entry in items]}

@@ -23,10 +23,11 @@ SilentGuard helps you visualize outgoing network connections in real time and de
 - Real-time monitoring of outgoing connections
 - Process → IP mapping
 - Trust classification with local rules file (`~/.silentguard_rules.json`):
-  - Known
-  - Unknown
-  - Local
-- Blocked
+  - Known (process matches `known_processes`)
+  - Trusted (remote IP matches `trusted_ips`)
+  - Unknown (everything else, surfaced for review)
+  - Local (loopback, RFC 1918, link-local)
+  - Blocked (remote IP matches `blocked_ips`)
 - Detection of new connections
 - Simple and clean GTK interface
 - TUI mode with memory actions, blocklist updates (`B` key), and JSON export (`E` key)
@@ -88,14 +89,15 @@ silentguard-api --port 9000   # custom port
 
 Endpoints:
 
-| Method | Path                   | Purpose                                          |
-| ------ | ---------------------- | ------------------------------------------------ |
-| GET    | `/status`              | API identity / health summary                    |
-| GET    | `/connections`         | Current outgoing connection snapshot             |
-| GET    | `/connections/summary` | Compact aggregate view of outgoing connections   |
-| GET    | `/blocked`             | Locally-marked blocked IPs from rules            |
-| GET    | `/trusted`             | Trusted IPs from rules                           |
-| GET    | `/alerts`              | Alerts (placeholder, currently empty)            |
+| Method | Path                            | Purpose                                          |
+| ------ | ------------------------------- | ------------------------------------------------ |
+| GET    | `/status`                       | API identity / health summary                    |
+| GET    | `/connections`                  | Current outgoing connection snapshot             |
+| GET    | `/connections/summary`          | Compact aggregate view of outgoing connections   |
+| GET    | `/connections/recent-unknown`   | Recently observed unknown destinations (cached)  |
+| GET    | `/blocked`                      | Locally-marked blocked IPs from rules            |
+| GET    | `/trusted`                      | Trusted IPs from rules                           |
+| GET    | `/alerts`                       | Alerts (placeholder, currently empty)            |
 
 Each endpoint returns JSON. Collections use a stable `{"items": [...]}`
 shape so future schema additions stay backwards compatible. When data is
@@ -117,7 +119,18 @@ Example payload:
   "local": 38,
   "known": 12,
   "unknown": 5,
+  "trusted": 2,
   "blocked": 0,
+  "recent_unknown": [
+    {
+      "ip": "203.0.113.10",
+      "process": "firefox",
+      "seen_count": 3,
+      "first_seen": "2026-05-09T20:10:00Z",
+      "last_seen": "2026-05-09T20:15:00Z",
+      "classification": "unknown"
+    }
+  ],
   "by_process": [
     {"process": "firefox", "count": 8, "known": 6, "unknown": 2}
   ],
@@ -129,10 +142,12 @@ Example payload:
 
 Notes:
 
-- Top-level counts use the same trust labels SilentGuard already applies
-  in the TUI (`local`, `known`, `unknown`, `blocked`). Trusted IPs from
-  the rules file are folded into `known`, matching the existing
-  classifier.
+- Top-level counts use the canonical classifications (`local`, `known`,
+  `unknown`, `trusted`, `blocked`). Each connection has exactly one
+  classification: blocked > trusted > local > known > unknown.
+- `recent_unknown` is read from a small local cache of recently-seen
+  unknown destinations (see "Connection classification & unknown
+  tracking" below). It is capped to a small safe number per response.
 - `by_process` groups connections by process name and is capped to a
   small number of entries.
 - `top_remote_hosts` lists the most-frequent non-local remote IPs and is
@@ -140,6 +155,72 @@ Notes:
   external network calls), so only the IP is reported.
 - When no connections can be enumerated (for example, if `psutil` lacks
   permissions), the response carries zeros plus `"status": "not_available"`.
+
+### `/connections/recent-unknown`
+
+Returns the most-recently-seen unknown destinations from the local
+cache, as the read-only equivalent of the `recent_unknown` field in
+the summary but with a larger cap so consumers can paginate or browse:
+
+```json
+{
+  "items": [
+    {
+      "ip": "203.0.113.10",
+      "process": "firefox",
+      "seen_count": 3,
+      "first_seen": "2026-05-09T20:10:00Z",
+      "last_seen": "2026-05-09T20:15:00Z",
+      "classification": "unknown"
+    }
+  ]
+}
+```
+
+If the cache is unreadable, the response degrades gracefully to
+`{"items": [], "status": "not_available"}`.
+
+### Connection classification & unknown tracking
+
+SilentGuard owns its classification logic in
+`silentguard/connection_state.py` so the TUI, GUI, and API report the
+same labels for the same data. Each outgoing connection is classified
+exactly once using this precedence:
+
+1. `blocked` — remote IP matches `blocked_ips` in the rules file.
+2. `trusted` — remote IP matches `trusted_ips` in the rules file.
+3. `local`   — remote IP is loopback, RFC 1918, or link-local.
+4. `known`   — process name matches `known_processes`.
+5. `unknown` — anything else.
+
+To help local consumers like Nova describe newly-observed traffic,
+SilentGuard maintains a small on-disk cache of recently-seen unknown
+destinations at `~/.silentguard_unknown.json`. The cache is updated
+whenever connections are enumerated (TUI/GUI refresh, or a hit on
+`/connections/summary`).
+
+What the cache **stores** for each entry:
+
+- `ip` — remote IP only (no DNS resolution is ever performed).
+- `process` — the observed process name, when safely available.
+- `first_seen` / `last_seen` — UTC ISO timestamps.
+- `seen_count` — number of snapshots in which the destination appeared.
+- `classification` — current canonical classification. Entries that
+  transition out of `unknown` (e.g. you trusted the IP) keep their row
+  with the updated label so the transition is visible.
+
+What the cache **does not** store, by design:
+
+- No PIDs, ports, or per-connection rows.
+- No process command lines or arguments.
+- No environment variables.
+- No raw socket data, packet contents, or byte counters.
+- No DNS lookups or remote hostnames sourced from the network.
+
+The cache is local-only and intended as read-only context for tools
+that ask SilentGuard about its state. SilentGuard never sends it
+anywhere, never blocks IPs based on it, and Nova consumes it only
+read-only.
 
 ## Rules file (optional)
 
@@ -154,6 +235,8 @@ Create `~/.silentguard_rules.json` to customize trust classification:
 ```
 
 When an IP is in `blocked_ips`, it appears as `Blocked` in the UI/TUI.
+When an IP is in `trusted_ips`, it appears as `Trusted` and is reported
+separately from `Known` in API summaries.
 ---
 
 ## Arch Linux (AUR - in progress)
