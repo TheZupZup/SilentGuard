@@ -40,6 +40,7 @@ ROUTES: dict[str, Route] = {
     "/blocked": handlers.get_blocked,
     "/trusted": handlers.get_trusted,
     "/alerts": handlers.get_alerts,
+    "/alerts/summary": handlers.get_alerts_summary,
 }
 
 

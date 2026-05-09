@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from silentguard import detection
 from silentguard.connection_state import (
     CLASSIFICATION_PRIORITY,
     classification_from_label,
@@ -97,15 +98,71 @@ def get_trusted() -> dict[str, Any]:
     return {"items": items}
 
 
-def get_alerts() -> dict[str, Any]:
-    """Return security alerts.
+def _empty_alert_summary(status: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "total": 0,
+        "by_severity": {severity: 0 for severity in detection.SEVERITIES},
+        "by_type": {},
+        "highest_severity": None,
+    }
+    if status:
+        payload["status"] = status
+    return payload
 
-    SilentGuard does not yet emit a first-class alert stream, so this
-    endpoint deliberately returns an empty list with ``not_available``
-    status. The schema is fixed in advance so future consumers can rely
-    on the shape once alerts land.
+
+def get_alerts() -> dict[str, Any]:
+    """Return read-only flood/anomaly alerts derived from current connections.
+
+    SilentGuard analyses the current connection snapshot (and the small
+    local unknown-destinations cache) for conservative flood patterns
+    and returns the resulting alerts. The endpoint is **detection only**:
+    it never blocks IPs, mutates rules, or changes the firewall.
+
+    SilentGuard cannot absorb upstream DDoS attacks that saturate the
+    network link before traffic reaches the local machine — see
+    ``silentguard.detection`` for the full set of caveats.
+
+    When the underlying monitor cannot enumerate connections (for
+    example because ``psutil`` lacks permissions), the response degrades
+    to ``{"items": [], "status": "not_available"}`` so consumers can
+    distinguish "no alerts" from "could not check".
     """
-    return {"items": [], "status": "not_available"}
+    try:
+        connections = get_outgoing_connections()
+    except Exception as exc:
+        LOGGER.warning("get_alerts: monitor unavailable: %s", exc)
+        return {"items": [], "status": "not_available"}
+
+    try:
+        alerts = detection.evaluate(connections)
+    except Exception:
+        LOGGER.exception("get_alerts: detection failed")
+        return {"items": [], "status": "not_available"}
+
+    return {"items": [alert.to_dict() for alert in alerts]}
+
+
+def get_alerts_summary() -> dict[str, Any]:
+    """Return a compact summary of the current flood/anomaly alerts.
+
+    Intended for at-a-glance consumers (badges, status lines) that do
+    not need the full alert list. Read-only and degrades to a zeroed
+    payload with ``"status": "not_available"`` if the monitor or
+    detection layer is unreachable.
+    """
+    try:
+        connections = get_outgoing_connections()
+    except Exception as exc:
+        LOGGER.warning("get_alerts_summary: monitor unavailable: %s", exc)
+        return _empty_alert_summary(status="not_available")
+
+    try:
+        alerts = detection.evaluate(connections)
+    except Exception:
+        LOGGER.exception("get_alerts_summary: detection failed")
+        return _empty_alert_summary(status="not_available")
+
+    return detection.summarize(alerts)
 
 
 def _empty_summary(status: str | None = None) -> dict[str, Any]:

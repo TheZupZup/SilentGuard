@@ -31,6 +31,8 @@ SilentGuard helps you visualize outgoing network connections in real time and de
 - Detection of new connections
 - Simple and clean GTK interface
 - TUI mode with memory actions, blocklist updates (`B` key), and JSON export (`E` key)
+- Local flood / DDoS-style anomaly detection (visibility only — never
+  automatic blocking; cannot absorb upstream bandwidth saturation)
 
 ---
 
@@ -97,7 +99,8 @@ Endpoints:
 | GET    | `/connections/recent-unknown`   | Recently observed unknown destinations (cached)  |
 | GET    | `/blocked`                      | Locally-marked blocked IPs from rules            |
 | GET    | `/trusted`                      | Trusted IPs from rules                           |
-| GET    | `/alerts`                       | Alerts (placeholder, currently empty)            |
+| GET    | `/alerts`                       | Local flood / anomaly alerts (detection only)    |
+| GET    | `/alerts/summary`               | Compact alert counts by severity / type          |
 
 Each endpoint returns JSON. Collections use a stable `{"items": [...]}`
 shape so future schema additions stay backwards compatible. When data is
@@ -179,6 +182,93 @@ the summary but with a larger cap so consumers can paginate or browse:
 
 If the cache is unreadable, the response degrades gracefully to
 `{"items": [], "status": "not_available"}`.
+
+### `/alerts` and `/alerts/summary`
+
+SilentGuard performs lightweight, **local-only** detection of patterns
+that may indicate flood or DDoS-style activity. Alerts surface through
+two read-only endpoints.
+
+What this gives you:
+
+- Visibility into the local connection state when something looks wrong.
+- Deterministic thresholds with conservative defaults, so a normal
+  desktop should not generate alerts.
+- A stable JSON shape consumers can rely on as the schema grows.
+
+What this **does not** do — by design, in this PR and going forward
+without explicit user opt-in:
+
+- ❌ It does **not** automatically block IPs.
+- ❌ It does **not** modify firewall rules (`ufw`, `firewalld`,
+  `nftables`, `iptables`).
+- ❌ It does **not** run privileged or shell commands.
+- ❌ It does **not** take autonomous defensive actions.
+- ❌ It does **not** depend on Nova or any other external service.
+
+Honest limitation — please read:
+
+> SilentGuard runs on the local machine. It cannot absorb upstream DDoS
+> attacks that saturate the internet uplink before traffic reaches the
+> local NIC. For volumetric attacks against a public-facing service,
+> use ISP- or edge-level DDoS protection. SilentGuard's detection is
+> for **local visibility and alerting only**. Any future mitigation
+> must require explicit human confirmation.
+
+Detection signals (current set):
+
+- **Per-remote-IP flood** — one remote IP appears in many concurrent
+  outgoing connections.
+- **Connection spike** — total active outgoing connections are
+  unusually high.
+- **Unknown burst** — many distinct unknown remote IPs are active in
+  the current snapshot.
+- **Connection churn** — many distinct unknown destinations were
+  observed in the recent rolling window (5 minutes).
+
+Severity levels are `low`, `medium`, `high`, and `critical`, assigned
+deterministically from the count vs. each detector's medium / high /
+critical thresholds (see `silentguard/detection.py`).
+
+Example alert object:
+
+```json
+{
+  "id": "flood-remote-ip-203.0.113.10",
+  "severity": "medium",
+  "type": "possible_flood",
+  "title": "Repeated connections from one remote IP",
+  "message": "One remote IP appears in many concurrent outgoing connections, which can indicate a flood pattern. SilentGuard detects only and does not block automatically.",
+  "source_ip": "203.0.113.10",
+  "count": 120,
+  "created_at": "2026-05-09T20:15:00Z",
+  "status": "active"
+}
+```
+
+`window_seconds` is included on alerts that look back over a window
+(e.g. churn). Fields whose value is not applicable are omitted from
+the payload to keep responses compact.
+
+`/alerts/summary` returns a small overview that's safe to poll:
+
+```json
+{
+  "total": 2,
+  "by_severity": {"low": 0, "medium": 1, "high": 1, "critical": 0},
+  "by_type": {"possible_flood": 1, "connection_churn": 1},
+  "highest_severity": "high"
+}
+```
+
+If the underlying monitor cannot enumerate connections, both endpoints
+degrade gracefully to an empty payload with `"status": "not_available"`.
+
+The `/alerts` endpoint exposes alert summaries only. It deliberately
+does **not** include raw packet data, full process command lines,
+process environment variables, or PIDs / ports — see
+`silentguard/detection.py` for the schema and `connection_state.py`
+for the cache storage policy.
 
 ### Connection classification & unknown tracking
 

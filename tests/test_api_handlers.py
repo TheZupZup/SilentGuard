@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from silentguard import monitor
+from silentguard import detection, monitor
 from silentguard.api import handlers
 
 
@@ -131,11 +131,109 @@ def test_get_trusted_marks_not_available_on_error(monkeypatch) -> None:
     assert payload == {"items": [], "status": "not_available"}
 
 
-def test_get_alerts_returns_empty_not_available_placeholder() -> None:
+def test_get_alerts_returns_empty_when_traffic_is_normal(monkeypatch) -> None:
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: [])
+
     payload = handlers.get_alerts()
 
-    assert payload["items"] == []
+    assert payload == {"items": []}
+
+
+def test_get_alerts_marks_not_available_when_monitor_fails(monkeypatch) -> None:
+    def boom() -> list:
+        raise RuntimeError("psutil unavailable")
+
+    monkeypatch.setattr(handlers, "get_outgoing_connections", boom)
+
+    payload = handlers.get_alerts()
+
+    assert payload == {"items": [], "status": "not_available"}
+
+
+def test_get_alerts_returns_per_ip_flood(monkeypatch) -> None:
+    fake = [
+        _conn(process_name="curl", remote_ip="203.0.113.10", trust="Unknown")
+        for _ in range(detection.REMOTE_IP_FLOOD_MEDIUM)
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+
+    payload = handlers.get_alerts()
+
+    flood = [
+        item for item in payload["items"]
+        if item["type"] == detection.ALERT_TYPE_POSSIBLE_FLOOD
+    ]
+    assert len(flood) == 1
+    alert = flood[0]
+    assert alert["severity"] == detection.SEVERITY_MEDIUM
+    assert alert["source_ip"] == "203.0.113.10"
+    assert alert["count"] == detection.REMOTE_IP_FLOOD_MEDIUM
+    assert alert["status"] == "active"
+    assert alert["id"] == "flood-remote-ip-203.0.113.10"
+
+
+def test_get_alerts_payload_does_not_expose_pids_or_ports(monkeypatch) -> None:
+    import json
+
+    fake = [
+        _conn(
+            process_name="curl",
+            pid=4242,
+            remote_ip="203.0.113.10",
+            remote_port=8443,
+            trust="Unknown",
+        )
+        for _ in range(detection.REMOTE_IP_FLOOD_MEDIUM)
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+
+    encoded = json.dumps(handlers.get_alerts())
+
+    assert "4242" not in encoded
+    assert "8443" not in encoded
+    assert "pid" not in encoded
+    assert "remote_port" not in encoded
+
+
+def test_get_alerts_summary_empty_when_no_alerts(monkeypatch) -> None:
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: [])
+
+    payload = handlers.get_alerts_summary()
+
+    assert payload == {
+        "total": 0,
+        "by_severity": {severity: 0 for severity in detection.SEVERITIES},
+        "by_type": {},
+        "highest_severity": None,
+    }
+
+
+def test_get_alerts_summary_marks_not_available_on_monitor_error(monkeypatch) -> None:
+    def boom() -> list:
+        raise RuntimeError("psutil unavailable")
+
+    monkeypatch.setattr(handlers, "get_outgoing_connections", boom)
+
+    payload = handlers.get_alerts_summary()
+
     assert payload["status"] == "not_available"
+    assert payload["total"] == 0
+    assert payload["highest_severity"] is None
+
+
+def test_get_alerts_summary_reports_highest_severity(monkeypatch) -> None:
+    fake = [
+        _conn(process_name="curl", remote_ip="203.0.113.10", trust="Unknown")
+        for _ in range(detection.REMOTE_IP_FLOOD_CRITICAL)
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+
+    payload = handlers.get_alerts_summary()
+
+    assert payload["total"] >= 1
+    assert payload["highest_severity"] == detection.SEVERITY_CRITICAL
+    assert payload["by_severity"][detection.SEVERITY_CRITICAL] >= 1
+    assert payload["by_type"][detection.ALERT_TYPE_POSSIBLE_FLOOD] >= 1
 
 
 def _conn(

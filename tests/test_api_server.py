@@ -5,7 +5,7 @@ import urllib.request
 
 import pytest
 
-from silentguard import monitor
+from silentguard import detection, monitor
 from silentguard.api import handlers
 from silentguard.api.server import create_server
 
@@ -164,14 +164,57 @@ def test_trusted_endpoint_with_no_rules(api_server, tmp_path, monkeypatch) -> No
     assert payload == {"items": []}
 
 
-def test_alerts_endpoint(api_server) -> None:
+def test_alerts_endpoint_empty_when_no_connections(api_server, monkeypatch) -> None:
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: [])
     host, port = api_server
 
     status, _, payload = _get_json(host, port, "/alerts")
 
     assert status == 200
-    assert payload["items"] == []
-    assert payload["status"] == "not_available"
+    assert payload == {"items": []}
+
+
+def test_alerts_endpoint_returns_alerts_when_threshold_exceeded(
+    api_server, monkeypatch
+) -> None:
+    fake = [
+        monitor.ConnectionInfo(
+            process_name="curl",
+            pid=4242,
+            remote_ip="203.0.113.10",
+            remote_port=443,
+            status="ESTABLISHED",
+            trust="Unknown",
+        )
+        for _ in range(detection.REMOTE_IP_FLOOD_MEDIUM)
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+    host, port = api_server
+
+    status, _, payload = _get_json(host, port, "/alerts")
+
+    assert status == 200
+    flood_alerts = [
+        item for item in payload["items"]
+        if item["type"] == detection.ALERT_TYPE_POSSIBLE_FLOOD
+    ]
+    assert len(flood_alerts) == 1
+    assert flood_alerts[0]["severity"] == detection.SEVERITY_MEDIUM
+    assert flood_alerts[0]["source_ip"] == "203.0.113.10"
+
+
+def test_alerts_summary_endpoint_returns_zeroed_when_no_alerts(
+    api_server, monkeypatch
+) -> None:
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: [])
+    host, port = api_server
+
+    status, _, payload = _get_json(host, port, "/alerts/summary")
+
+    assert status == 200
+    assert payload["total"] == 0
+    assert payload["highest_severity"] is None
+    assert all(count == 0 for count in payload["by_severity"].values())
 
 
 def test_recent_unknown_endpoint_returns_empty_when_cache_missing(api_server) -> None:
