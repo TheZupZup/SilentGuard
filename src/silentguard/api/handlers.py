@@ -1,16 +1,23 @@
-"""Pure-Python handlers for the SilentGuard read-only API.
+"""Pure-Python handlers for the SilentGuard local API.
 
 Each handler returns a JSON-serializable ``dict``. They are intentionally
 free of HTTP-specific concerns so the same functions can be unit-tested,
 embedded in another transport, or reused by future consumers.
 
-All handlers are read-only: they never mutate rules, memory, sockets,
-processes, or system state. ``get_connections_summary`` does write to a
-small local cache of recently-seen unknown destinations
+The vast majority of handlers are read-only: they never mutate rules,
+memory, sockets, processes, or system state. ``get_connections_summary``
+writes to a small local cache of recently-seen unknown destinations
 (``~/.silentguard_unknown.json``) so consumers like Nova can describe
 recent unknown traffic; that cache stores only minimal, non-sensitive
 metadata (IP, process, timestamps, count, classification) and never
 leaves the local machine.
+
+The mitigation handlers (``set_mitigation_mode``, ``add_temporary_block``,
+``remove_temporary_block``) are the **only** write surface. They are
+narrow on purpose: each handler validates its inputs, refuses
+private/local/trusted/protected IPs, writes an audit entry on every
+outcome, and is safe to call only from a loopback caller (the HTTP
+layer enforces that).
 """
 
 from __future__ import annotations
@@ -18,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from silentguard import detection
+from silentguard import detection, mitigation
 from silentguard.connection_state import (
     CLASSIFICATION_PRIORITY,
     classification_from_label,
@@ -320,3 +327,172 @@ def get_recent_unknown() -> dict[str, Any]:
         return {"items": [], "status": "not_available"}
 
     return {"items": [_serialize_recent_unknown(entry) for entry in items]}
+
+
+# ---------------------------------------------------------------------------
+# Mitigation: read
+# ---------------------------------------------------------------------------
+
+
+def get_mitigation() -> dict[str, Any]:
+    """Return the current mitigation posture, active temp blocks, and audit tail.
+
+    Read-only. The status payload is shaped so a Nova/UI consumer can
+    render the prompt copy, the current mode, and the most recent
+    actions in one screen without making multiple round trips.
+    """
+    try:
+        return mitigation.status_payload()
+    except Exception as exc:
+        LOGGER.warning("get_mitigation: state unavailable: %s", exc)
+        return {
+            "mode": mitigation.DEFAULT_MODE,
+            "default_mode": mitigation.DEFAULT_MODE,
+            "available_modes": list(mitigation.MITIGATION_MODES),
+            "prompt": mitigation.MITIGATION_PROMPT,
+            "disclaimer": mitigation.MITIGATION_DISCLAIMER,
+            "active_temp_blocks": [],
+            "recent_audit": [],
+            "status": "not_available",
+        }
+
+
+# ---------------------------------------------------------------------------
+# Mitigation: write helpers
+#
+# Each write handler returns ``(status, payload)``. The HTTP layer is
+# responsible for actually setting the response code; passing it through
+# the return value keeps the handlers easy to unit test without HTTP
+# infrastructure.
+# ---------------------------------------------------------------------------
+
+
+def _bad_request(reason: str, **extra: Any) -> tuple[int, dict[str, Any]]:
+    payload: dict[str, Any] = {"error": "bad_request", "reason": reason}
+    payload.update(extra)
+    return 400, payload
+
+
+def enable_temporary_mitigation(body: dict | None) -> tuple[int, dict[str, Any]]:
+    """Switch to ``temporary_auto_block`` mode.
+
+    The body must include ``"acknowledge": true``. Without it the
+    handler refuses so this endpoint cannot escalate the mode by
+    accident (for example, a stray ``curl -XPOST``). The server
+    additionally rejects non-loopback callers before the handler is
+    invoked.
+    """
+    body = body or {}
+    if body.get("acknowledge") is not True:
+        return _bad_request(
+            "acknowledge_required",
+            message=(
+                "Pass {\"acknowledge\": true} to confirm you understand "
+                "that SilentGuard will temporarily block IPs that exceed "
+                "the conservative high-severity threshold. Blocks are "
+                "local, time-bounded, and reversible."
+            ),
+            prompt=mitigation.MITIGATION_PROMPT,
+            disclaimer=mitigation.MITIGATION_DISCLAIMER,
+        )
+    note = body.get("note")
+    if note is not None and not isinstance(note, str):
+        return _bad_request("note_must_be_string")
+    try:
+        mitigation.set_mode(
+            mitigation.MODE_TEMPORARY_AUTO_BLOCK,
+            actor="api",
+            note=note,
+        )
+    except ValueError as exc:
+        return _bad_request("invalid_mode", detail=str(exc))
+    return 200, {
+        "ok": True,
+        "mode": mitigation.MODE_TEMPORARY_AUTO_BLOCK,
+        "disclaimer": mitigation.MITIGATION_DISCLAIMER,
+        "auto_block_threshold": "REMOTE_IP_FLOOD_HIGH",
+    }
+
+
+def disable_mitigation(body: dict | None) -> tuple[int, dict[str, Any]]:
+    """Switch back to ``detection_only`` mode.
+
+    Optionally clears any currently-active temporary blocks if the body
+    sets ``"clear_temp_blocks": true`` so the operator can return the
+    machine to a clean read-only posture in one call.
+    """
+    body = body or {}
+    note = body.get("note")
+    if note is not None and not isinstance(note, str):
+        return _bad_request("note_must_be_string")
+    try:
+        mitigation.set_mode(
+            mitigation.MODE_DETECTION_ONLY,
+            actor="api",
+            note=note,
+        )
+    except ValueError as exc:
+        return _bad_request("invalid_mode", detail=str(exc))
+
+    cleared: list[str] = []
+    if body.get("clear_temp_blocks") is True:
+        for entry in list(mitigation.active_temp_blocks()):
+            ok, _ = mitigation.remove_temporary_block(entry["ip"], actor="api")
+            if ok:
+                cleared.append(entry["ip"])
+
+    return 200, {
+        "ok": True,
+        "mode": mitigation.MODE_DETECTION_ONLY,
+        "cleared_temp_blocks": cleared,
+    }
+
+
+def add_temporary_block(body: dict | None) -> tuple[int, dict[str, Any]]:
+    """Add a temporary block, validating the IP and rate-limit posture.
+
+    Refuses local, private, multicast, reserved, trusted, protected, or
+    already-blocked addresses, and never blocks based on body fields
+    other than the ones listed below. ``source`` is forced to
+    ``"manual"`` because the API endpoint represents an explicit user
+    action; auto-block goes through :func:`mitigation.apply_auto_blocks`.
+    """
+    body = body or {}
+    ip = body.get("ip")
+    if not isinstance(ip, str) or not ip.strip():
+        return _bad_request("ip_required")
+    reason = body.get("reason", "")
+    if reason is not None and not isinstance(reason, str):
+        return _bad_request("reason_must_be_string")
+    duration = body.get("duration_seconds")
+    if duration is not None and not isinstance(duration, (int, float)):
+        return _bad_request("duration_must_be_number")
+    try:
+        rules = load_rules()
+    except Exception:
+        rules = {}
+    ok, payload = mitigation.add_temporary_block(
+        ip,
+        reason=str(reason or ""),
+        duration_seconds=duration,
+        source="manual",
+        rules=rules,
+    )
+    if not ok:
+        return 400, {
+            "error": "rejected",
+            "reason": payload.get("reason", "rejected"),
+        }
+    return 201, {"ok": True, "block": payload}
+
+
+def remove_temporary_block(ip: str) -> tuple[int, dict[str, Any]]:
+    """Remove a temporary block by IP. Returns 404 if no such block exists."""
+    if not isinstance(ip, str) or not ip.strip():
+        return _bad_request("ip_required")
+    ok, payload = mitigation.remove_temporary_block(ip, actor="api")
+    if not ok:
+        if payload.get("reason") == "not_found":
+            return 404, {"error": "not_found", "ip": ip.strip()}
+        return _bad_request(payload.get("reason", "rejected"))
+    return 200, {"ok": True, "removed": payload}
