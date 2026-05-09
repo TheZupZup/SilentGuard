@@ -67,6 +67,68 @@ def test_connections_endpoint_returns_items_list(api_server, monkeypatch) -> Non
     assert payload == {"items": []}
 
 
+def test_connections_summary_endpoint_returns_compact_summary(
+    api_server, monkeypatch
+) -> None:
+    fake = [
+        monitor.ConnectionInfo(
+            process_name="firefox",
+            pid=1234,
+            remote_ip="8.8.8.8",
+            remote_port=443,
+            status="ESTABLISHED",
+            trust="Known",
+        ),
+        monitor.ConnectionInfo(
+            process_name="curl",
+            pid=5678,
+            remote_ip="93.184.216.34",
+            remote_port=443,
+            status="ESTABLISHED",
+            trust="Unknown",
+        ),
+        monitor.ConnectionInfo(
+            process_name="systemd",
+            pid=1,
+            remote_ip="127.0.0.1",
+            remote_port=53,
+            status="ESTABLISHED",
+            trust="Local",
+        ),
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+    host, port = api_server
+
+    status, _, payload = _get_json(host, port, "/connections/summary")
+
+    assert status == 200
+    assert payload["total"] == 3
+    assert payload["local"] == 1
+    assert payload["known"] == 1
+    assert payload["unknown"] == 1
+    assert payload["blocked"] == 0
+    assert {bucket["process"] for bucket in payload["by_process"]} == {
+        "firefox",
+        "curl",
+        "systemd",
+    }
+    remote_ips = {host_entry["ip"] for host_entry in payload["top_remote_hosts"]}
+    assert remote_ips == {"8.8.8.8", "93.184.216.34"}
+
+
+def test_connections_summary_endpoint_empty(api_server, monkeypatch) -> None:
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: [])
+    host, port = api_server
+
+    status, _, payload = _get_json(host, port, "/connections/summary")
+
+    assert status == 200
+    assert payload["total"] == 0
+    assert payload["by_process"] == []
+    assert payload["top_remote_hosts"] == []
+    assert "status" not in payload
+
+
 def test_blocked_endpoint_with_no_rules(api_server, tmp_path, monkeypatch) -> None:
     rules_file = tmp_path / "rules.json"
     monkeypatch.setattr(monitor, "RULES_FILE", rules_file)
