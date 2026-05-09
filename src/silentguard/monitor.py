@@ -155,6 +155,15 @@ def classify_ip(ip: str) -> str:
 def get_outgoing_connections() -> List[ConnectionInfo]:
     results: List[ConnectionInfo] = []
     rules = load_rules()
+    try:
+        from silentguard import mitigation
+
+        mitigation.expire_temp_blocks()
+        rules = mitigation.augment_rules_with_temp_blocks(rules)
+    except Exception:
+        LOGGER.debug(
+            "Skipping mitigation temp-block merge due to error", exc_info=True
+        )
     process_name_cache: dict[int, str] = {}
 
     for conn in psutil.net_connections(kind="inet"):

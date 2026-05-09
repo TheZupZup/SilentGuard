@@ -47,7 +47,7 @@ Labels: `good first issue`
 ## Issue 3: Make blocking language honest (UI blocklist vs firewall block)
 
 ## Overview
-Current “block” behavior writes IPs to the local rules/memory files and marks trust as `Blocked`, but it does not block network traffic at OS/firewall level.
+Current “block” behavior writes IPs to the local rules/memory files and marks trust as `Blocked`, but it does not block network traffic at OS/firewall level. The opt-in mitigation flow (see `silentguard/mitigation.py`) layers temporary, reversible local blocks on top of the same classification path — still no firewall integration, by design.
 
 ## What needs to be done
 - [ ] Update README and in-app wording to clearly say “mark as blocked in SilentGuard” unless real firewall integration exists.
@@ -58,7 +58,10 @@ Current “block” behavior writes IPs to the local rules/memory files and mark
 Users are not misled into thinking SilentGuard enforces network policy today.
 
 ## Notes
-Do **not** implement privileged firewall integration in this issue.
+Do **not** implement privileged firewall integration in this issue. The
+mitigation layer added in the flood-mitigation PR is **local only**,
+opt-in, temporary, and reversible. It is not a substitute for upstream
+DDoS protection or for an OS-level firewall.
 
 Labels: `help wanted`
 

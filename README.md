@@ -33,6 +33,9 @@ SilentGuard helps you visualize outgoing network connections in real time and de
 - TUI mode with memory actions, blocklist updates (`B` key), and JSON export (`E` key)
 - Local flood / DDoS-style anomaly detection (visibility only — never
   automatic blocking; cannot absorb upstream bandwidth saturation)
+- Opt-in, human-approved temporary local mitigation (default mode is
+  `detection_only` — see "Opt-in flood mitigation" below for the full
+  safety contract)
 
 ---
 
@@ -101,6 +104,11 @@ Endpoints:
 | GET    | `/trusted`                      | Trusted IPs from rules                           |
 | GET    | `/alerts`                       | Local flood / anomaly alerts (detection only)    |
 | GET    | `/alerts/summary`               | Compact alert counts by severity / type          |
+| GET    | `/mitigation`                   | Current mitigation mode, active temp blocks, audit tail |
+| POST   | `/mitigation/enable-temporary`  | Switch to opt-in `temporary_auto_block` mode (loopback only) |
+| POST   | `/mitigation/disable`           | Return to `detection_only` (loopback only)       |
+| POST   | `/blocked/temporary`            | Add a temporary local block (loopback only)      |
+| POST   | `/blocked/<ip>/unblock`         | Remove a temporary local block (loopback only)   |
 
 Each endpoint returns JSON. Collections use a stable `{"items": [...]}`
 shape so future schema additions stay backwards compatible. When data is
@@ -196,12 +204,15 @@ What this gives you:
   desktop should not generate alerts.
 - A stable JSON shape consumers can rely on as the schema grows.
 
-What this **does not** do — by design, in this PR and going forward
-without explicit user opt-in:
+What this **does not** do — by design, without explicit user opt-in:
 
-- ❌ It does **not** automatically block IPs.
+- ❌ It does **not** automatically block IPs. The default mitigation
+  mode is `detection_only`. Blocking is opt-in via the mitigation
+  endpoints and is always temporary, reversible, and audited — see
+  "Opt-in flood mitigation" below.
 - ❌ It does **not** modify firewall rules (`ufw`, `firewalld`,
-  `nftables`, `iptables`).
+  `nftables`, `iptables`). Even when mitigation is enabled, the only
+  enforcement is the local SilentGuard classification path.
 - ❌ It does **not** run privileged or shell commands.
 - ❌ It does **not** take autonomous defensive actions.
 - ❌ It does **not** depend on Nova or any other external service.
@@ -269,6 +280,153 @@ does **not** include raw packet data, full process command lines,
 process environment variables, or PIDs / ports — see
 `silentguard/detection.py` for the schema and `connection_state.py`
 for the cache storage policy.
+
+### Opt-in flood mitigation (local, temporary, reversible)
+
+SilentGuard ships an **opt-in** mitigation layer for the same flood/DDoS
+patterns the `/alerts` endpoint surfaces. It is intentionally narrow:
+
+- **Default mode is `detection_only`. SilentGuard never blocks
+  automatically out of the box.** Mitigation has to be turned on by an
+  explicit user action via the local API.
+- Blocks are **temporary, time-bounded, and reversible**. Each block
+  has an `expires_at` timestamp and is removed automatically when it
+  expires. There is also an explicit unblock endpoint.
+- Blocks are **local-only**. SilentGuard does not touch `iptables` /
+  `nftables` / `ufw` / `firewalld`. It marks the IP as `Blocked` in
+  the SilentGuard classification path so the TUI/GUI/API report it
+  consistently. Real firewall integration is intentionally out of
+  scope for this PR.
+- Every block, unblock, expiry, mode change, and rejection is recorded
+  in a local audit log (`~/.silentguard_mitigation_audit.json`).
+
+> **Honest limitation.** SilentGuard cannot absorb upstream DDoS
+> attacks that saturate the internet uplink before traffic reaches the
+> local NIC. This feature is **local mitigation only**. For volumetric
+> attacks against a public-facing service, use ISP- or edge-level DDoS
+> protection.
+
+#### Modes
+
+- `detection_only` (default) — never blocks. Detection runs, alerts
+  surface via `/alerts`, the user is in full control.
+- `ask_before_blocking` — surface the prompt to the UI/Nova so the
+  user can decide whether to enable enforcement. The mode itself
+  still does not auto-block; flipping to `temporary_auto_block` is a
+  separate explicit action.
+- `temporary_auto_block` — auto-block IPs that exceed the strict
+  high-severity flood threshold (`REMOTE_IP_FLOOD_HIGH`, currently
+  200 concurrent connections) for a bounded duration. Must be
+  enabled explicitly with `acknowledge: true` in the request body.
+
+#### What is **never** auto-blocked
+
+The mitigation module refuses any of the following, even when the
+mode is `temporary_auto_block`:
+
+- Loopback (`127.0.0.0/8`, `::1`).
+- RFC 1918 private ranges (`10/8`, `172.16/12`, `192.168/16`).
+- Link-local (`169.254/16`, `fe80::/10`).
+- Multicast, reserved, and unspecified addresses (covers most LAN
+  hardware and gateway/router IPs whose addresses are private).
+- Any IP in the `trusted_ips` list of `~/.silentguard_rules.json`.
+- Any IP in the user-configured `protected_ips` list (see below).
+- IPs that are already temporarily blocked.
+
+`protected_ips` is the user's explicit allowlist for VPN/Tailscale/
+Cloudflare-Tunnel endpoints, DNS resolvers, and the Nova/SilentGuard
+host's own IPs. Populate it in `~/.silentguard_mitigation.json`:
+
+```json
+{
+  "version": 1,
+  "mode": "detection_only",
+  "protected_ips": ["100.64.0.1", "1.1.1.1", "192.0.2.1"],
+  "temp_blocks": []
+}
+```
+
+#### Conservative thresholds and rate limits
+
+- Auto-block fires only on `possible_flood` alerts at `high` or
+  `critical` severity. `medium` alerts always surface for human
+  review only.
+- Block lifetimes are clamped to the `[30, 3600]` second range, with
+  a default of 600 seconds (10 minutes). Temporary blocks self-heal.
+- The mitigation policy refuses more than 10 automatic blocks within
+  any 60-second window. Burst rejections are recorded in the audit
+  log with `rejection_reason: "rate_limited"`.
+
+#### `GET /mitigation`
+
+Returns the current mode, the auto-block threshold, the rate-limit
+posture, the active temporary blocks, the protected-IP list, and the
+last few audit entries. Read-only and safe to poll.
+
+```json
+{
+  "mode": "detection_only",
+  "default_mode": "detection_only",
+  "available_modes": ["detection_only", "ask_before_blocking", "temporary_auto_block"],
+  "prompt": "This activity resembles a possible flood/DDoS-style attack. ...",
+  "disclaimer": "SilentGuard cannot absorb upstream DDoS attacks ...",
+  "auto_block_threshold": "REMOTE_IP_FLOOD_HIGH",
+  "auto_block_severities": ["critical", "high"],
+  "auto_block_rate_limit": {"max_blocks": 10, "window_seconds": 60},
+  "temp_block_duration_seconds": {"default": 600, "min": 30, "max": 3600},
+  "protected_ips": [],
+  "active_temp_blocks": [],
+  "recent_audit": []
+}
+```
+
+#### `POST /mitigation/enable-temporary`
+
+Body **must** include `"acknowledge": true`. Without it the request
+is rejected with `400 acknowledge_required` so the mode cannot be
+escalated by accident. The endpoint is loopback-only; non-loopback
+callers receive `403 forbidden` even when the server is bound to a
+broader interface.
+
+```bash
+curl -X POST http://127.0.0.1:8765/mitigation/enable-temporary \
+     -H "Content-Type: application/json" \
+     -d '{"acknowledge": true, "note": "operator confirmed"}'
+```
+
+#### `POST /mitigation/disable`
+
+Returns to `detection_only`. Optionally clears any active temporary
+blocks if `"clear_temp_blocks": true` is set.
+
+#### `POST /blocked/temporary`
+
+Adds a single temporary block. Validates the IP against the full
+never-block list above. Always records an audit entry — including
+on rejection — so the operator has a complete timeline.
+
+```bash
+curl -X POST http://127.0.0.1:8765/blocked/temporary \
+     -H "Content-Type: application/json" \
+     -d '{"ip": "203.0.113.10", "reason": "manual", "duration_seconds": 600}'
+```
+
+#### `POST /blocked/<ip>/unblock`
+
+Removes a temporary block. Returns `404` if no such block exists.
+
+#### Nova's role
+
+Nova **explains and asks**. It does not enforce.
+
+- Nova may render the prompt copy from `GET /mitigation` and ask the
+  user whether to enable temporary mitigation.
+- Nova must **not** silently enable mitigation. The flow is always
+  user-initiated.
+- Nova must **not** block IPs directly. If the user agrees, Nova
+  calls `POST /mitigation/enable-temporary` with `acknowledge: true`
+  and SilentGuard owns enforcement.
+- Nova must clearly state when the mode is active.
 
 ### Connection classification & unknown tracking
 
