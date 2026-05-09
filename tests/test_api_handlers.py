@@ -166,7 +166,9 @@ def test_get_connections_summary_empty_when_no_connections(monkeypatch) -> None:
         "local": 0,
         "known": 0,
         "unknown": 0,
+        "trusted": 0,
         "blocked": 0,
+        "recent_unknown": [],
         "by_process": [],
         "top_remote_hosts": [],
     }
@@ -193,6 +195,7 @@ def test_get_connections_summary_classification_counts(monkeypatch) -> None:
         _conn(process_name="firefox", remote_ip="8.8.4.4", trust="Known"),
         _conn(process_name="firefox", remote_ip="93.184.216.34", trust="Unknown"),
         _conn(process_name="curl", remote_ip="203.0.113.10", trust="Blocked"),
+        _conn(process_name="ssh", remote_ip="9.9.9.9", trust="Trusted"),
         _conn(process_name="systemd", remote_ip="127.0.0.1", trust="Local"),
         _conn(process_name="systemd", remote_ip="192.168.1.5", trust="Local"),
     ]
@@ -200,10 +203,11 @@ def test_get_connections_summary_classification_counts(monkeypatch) -> None:
 
     payload = handlers.get_connections_summary()
 
-    assert payload["total"] == 6
+    assert payload["total"] == 7
     assert payload["local"] == 2
     assert payload["known"] == 2
     assert payload["unknown"] == 1
+    assert payload["trusted"] == 1
     assert payload["blocked"] == 1
 
 
@@ -311,5 +315,122 @@ def test_get_connections_summary_unknown_trust_label_falls_back(monkeypatch) -> 
     assert payload["total"] == 2
     assert payload["unknown"] == 2
     assert payload["known"] == 0
+    assert payload["trusted"] == 0
     assert payload["local"] == 0
     assert payload["blocked"] == 0
+
+
+def test_get_connections_summary_includes_recent_unknown(monkeypatch) -> None:
+    fake = [
+        _conn(process_name="firefox", remote_ip="93.184.216.34", trust="Unknown"),
+        _conn(process_name="curl", remote_ip="203.0.113.10", trust="Unknown"),
+        _conn(process_name="systemd", remote_ip="127.0.0.1", trust="Local"),
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+
+    payload = handlers.get_connections_summary()
+
+    assert payload["unknown"] == 2
+    assert isinstance(payload["recent_unknown"], list)
+    ips = {entry["ip"] for entry in payload["recent_unknown"]}
+    assert ips == {"93.184.216.34", "203.0.113.10"}
+    for entry in payload["recent_unknown"]:
+        assert entry["classification"] == "unknown"
+        assert entry["seen_count"] >= 1
+        assert entry["first_seen"]
+        assert entry["last_seen"]
+        # Local connections must not appear in the recent_unknown list.
+        assert entry["ip"] != "127.0.0.1"
+
+
+def test_get_connections_summary_recent_unknown_increments_seen_count(
+    monkeypatch,
+) -> None:
+    fake = [
+        _conn(process_name="firefox", remote_ip="93.184.216.34", trust="Unknown"),
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+
+    handlers.get_connections_summary()
+    payload = handlers.get_connections_summary()
+
+    assert payload["unknown"] == 1
+    assert len(payload["recent_unknown"]) == 1
+    entry = payload["recent_unknown"][0]
+    assert entry["ip"] == "93.184.216.34"
+    assert entry["seen_count"] == 2
+
+
+def test_get_connections_summary_trusted_ips_not_counted_as_unknown(
+    monkeypatch,
+) -> None:
+    fake = [
+        _conn(process_name="ssh", remote_ip="1.1.1.1", trust="Trusted"),
+        _conn(process_name="ssh", remote_ip="1.1.1.1", trust="Trusted"),
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+
+    payload = handlers.get_connections_summary()
+
+    assert payload["trusted"] == 2
+    assert payload["unknown"] == 0
+    assert payload["recent_unknown"] == []
+
+
+def test_get_recent_unknown_returns_empty_when_cache_missing(monkeypatch) -> None:
+    payload = handlers.get_recent_unknown()
+
+    assert payload == {"items": []}
+
+
+def test_get_recent_unknown_lists_persisted_destinations(monkeypatch) -> None:
+    fake = [
+        _conn(process_name="firefox", remote_ip="93.184.216.34", trust="Unknown"),
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+
+    handlers.get_connections_summary()  # populate the cache
+    payload = handlers.get_recent_unknown()
+
+    assert len(payload["items"]) == 1
+    entry = payload["items"][0]
+    assert entry["ip"] == "93.184.216.34"
+    assert entry["process"] == "firefox"
+    assert entry["classification"] == "unknown"
+    assert entry["seen_count"] >= 1
+
+
+def test_get_recent_unknown_marks_not_available_on_cache_error(monkeypatch) -> None:
+    def boom(*args, **kwargs):
+        raise RuntimeError("cache exploded")
+
+    monkeypatch.setattr(handlers, "recent_unknown_destinations", boom)
+
+    payload = handlers.get_recent_unknown()
+
+    assert payload == {"items": [], "status": "not_available"}
+
+
+def test_get_connections_summary_recent_unknown_omits_pid_and_port(
+    monkeypatch,
+) -> None:
+    import json
+
+    fake = [
+        _conn(
+            process_name="firefox",
+            pid=4242,
+            remote_ip="93.184.216.34",
+            remote_port=8443,
+            trust="Unknown",
+        ),
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+
+    payload = handlers.get_connections_summary()
+    encoded = json.dumps(payload["recent_unknown"])
+
+    assert "4242" not in encoded
+    assert "8443" not in encoded
+    assert "pid" not in encoded
+    assert "remote_port" not in encoded

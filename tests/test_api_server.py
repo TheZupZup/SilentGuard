@@ -88,6 +88,14 @@ def test_connections_summary_endpoint_returns_compact_summary(
             trust="Unknown",
         ),
         monitor.ConnectionInfo(
+            process_name="ssh",
+            pid=900,
+            remote_ip="9.9.9.9",
+            remote_port=22,
+            status="ESTABLISHED",
+            trust="Trusted",
+        ),
+        monitor.ConnectionInfo(
             process_name="systemd",
             pid=1,
             remote_ip="127.0.0.1",
@@ -102,18 +110,23 @@ def test_connections_summary_endpoint_returns_compact_summary(
     status, _, payload = _get_json(host, port, "/connections/summary")
 
     assert status == 200
-    assert payload["total"] == 3
+    assert payload["total"] == 4
     assert payload["local"] == 1
     assert payload["known"] == 1
     assert payload["unknown"] == 1
+    assert payload["trusted"] == 1
     assert payload["blocked"] == 0
+    assert isinstance(payload["recent_unknown"], list)
     assert {bucket["process"] for bucket in payload["by_process"]} == {
         "firefox",
         "curl",
+        "ssh",
         "systemd",
     }
     remote_ips = {host_entry["ip"] for host_entry in payload["top_remote_hosts"]}
-    assert remote_ips == {"8.8.8.8", "93.184.216.34"}
+    assert remote_ips == {"8.8.8.8", "93.184.216.34", "9.9.9.9"}
+    recent_ips = {entry["ip"] for entry in payload["recent_unknown"]}
+    assert recent_ips == {"93.184.216.34"}
 
 
 def test_connections_summary_endpoint_empty(api_server, monkeypatch) -> None:
@@ -159,6 +172,47 @@ def test_alerts_endpoint(api_server) -> None:
     assert status == 200
     assert payload["items"] == []
     assert payload["status"] == "not_available"
+
+
+def test_recent_unknown_endpoint_returns_empty_when_cache_missing(api_server) -> None:
+    host, port = api_server
+
+    status, _, payload = _get_json(host, port, "/connections/recent-unknown")
+
+    assert status == 200
+    assert payload == {"items": []}
+
+
+def test_recent_unknown_endpoint_lists_persisted_destinations(
+    api_server, monkeypatch
+) -> None:
+    fake = [
+        monitor.ConnectionInfo(
+            process_name="firefox",
+            pid=4242,
+            remote_ip="93.184.216.34",
+            remote_port=443,
+            status="ESTABLISHED",
+            trust="Unknown",
+        ),
+    ]
+    monkeypatch.setattr(handlers, "get_outgoing_connections", lambda: fake)
+    host, port = api_server
+
+    # Hit /connections/summary so the cache gets populated through the
+    # documented sync path, then read via the dedicated endpoint.
+    _get_json(host, port, "/connections/summary")
+    status, _, payload = _get_json(host, port, "/connections/recent-unknown")
+
+    assert status == 200
+    assert len(payload["items"]) == 1
+    item = payload["items"][0]
+    assert item["ip"] == "93.184.216.34"
+    assert item["process"] == "firefox"
+    assert item["classification"] == "unknown"
+    # PID and ports are intentionally not surfaced.
+    assert "pid" not in item
+    assert "remote_port" not in item
 
 
 def test_unknown_endpoint_returns_404(api_server) -> None:

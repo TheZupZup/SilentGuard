@@ -8,6 +8,13 @@ import ipaddress
 import logging
 import psutil
 
+from silentguard.connection_state import (
+    classification_from_label,
+    classify_connection,
+    display_label,
+    record_connections,
+)
+
 RULES_FILE = Path.home() / ".silentguard_rules.json"
 DEFAULT_KNOWN_PROCESSES = {"firefox", "brave", "chrome", "code", "python3", "python"}
 DEFAULT_RULES = {
@@ -26,6 +33,11 @@ class ConnectionInfo:
     remote_port: int
     status: str
     trust: str
+    classification: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.classification:
+            self.classification = classification_from_label(self.trust)
 
 
 def load_rules() -> dict:
@@ -123,6 +135,12 @@ def untrust_ip_in_rules(ip: str) -> bool:
 
 
 def classify_ip(ip: str) -> str:
+    """Return the title-case classification for ``ip`` ignoring user rules.
+
+    Kept for backward compatibility with tests and earlier callers; new
+    code should prefer :func:`silentguard.connection_state.classify_connection`,
+    which folds in trusted/blocked rule overrides.
+    """
     try:
         addr = ipaddress.ip_address(ip)
 
@@ -137,9 +155,6 @@ def classify_ip(ip: str) -> str:
 def get_outgoing_connections() -> List[ConnectionInfo]:
     results: List[ConnectionInfo] = []
     rules = load_rules()
-    known_processes = {str(p).lower() for p in rules.get("known_processes", [])}
-    trusted_ips = {str(ip) for ip in rules.get("trusted_ips", [])}
-    blocked_ips = {str(ip) for ip in rules.get("blocked_ips", [])}
     process_name_cache: dict[int, str] = {}
 
     for conn in psutil.net_connections(kind="inet"):
@@ -159,15 +174,7 @@ def get_outgoing_connections() -> List[ConnectionInfo]:
                     process_name = "Access denied"
                 process_name_cache[pid] = process_name
 
-        trust = classify_ip(conn.raddr.ip)
-
-        if conn.raddr.ip in blocked_ips:
-            trust = "Blocked"
-        elif conn.raddr.ip in trusted_ips:
-            trust = "Known"
-        elif process_name.lower() in known_processes and trust == "Unknown":
-            trust = "Known"
-
+        classification = classify_connection(conn.raddr.ip, process_name, rules)
         results.append(
             ConnectionInfo(
                 process_name=process_name,
@@ -175,8 +182,17 @@ def get_outgoing_connections() -> List[ConnectionInfo]:
                 remote_ip=conn.raddr.ip,
                 remote_port=conn.raddr.port,
                 status=conn.status,
-                trust=trust,
+                trust=display_label(classification),
+                classification=classification,
             )
+        )
+
+    try:
+        record_connections(results)
+    except Exception:
+        LOGGER.debug(
+            "Skipping unknown destinations cache update due to error",
+            exc_info=True,
         )
 
     return results

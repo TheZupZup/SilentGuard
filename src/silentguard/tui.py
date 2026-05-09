@@ -148,13 +148,15 @@ class SilentGuardTUI(App):
 
             unknown_count = sum(1 for c in connections if c.trust == "Unknown")
             known_count = sum(1 for c in connections if c.trust == "Known")
+            trusted_count = sum(1 for c in connections if c.trust == "Trusted")
             local_count = sum(1 for c in connections if c.trust == "Local")
             blocked_count = sum(1 for c in connections if c.trust == "Blocked")
 
             status.update(
                 f"Mode: Connections | Monitoring ({len(connections)} connections) | "
                 f"Known: {known_count} | Unknown: {unknown_count} | "
-                f"Local: {local_count} | Blocked: {blocked_count} | Press R to refresh"
+                f"Trusted: {trusted_count} | Local: {local_count} | "
+                f"Blocked: {blocked_count} | Press R to refresh"
                 + (" | Unknown only: ON" if self.show_unknown_only else "")
             )
 
