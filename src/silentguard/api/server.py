@@ -35,6 +35,7 @@ Route = Callable[[], dict[str, Any]]
 ROUTES: dict[str, Route] = {
     "/status": handlers.get_status,
     "/connections": handlers.get_connections,
+    "/connections/summary": handlers.get_connections_summary,
     "/blocked": handlers.get_blocked,
     "/trusted": handlers.get_trusted,
     "/alerts": handlers.get_alerts,

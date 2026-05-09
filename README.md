@@ -88,18 +88,58 @@ silentguard-api --port 9000   # custom port
 
 Endpoints:
 
-| Method | Path           | Purpose                                  |
-| ------ | -------------- | ---------------------------------------- |
-| GET    | `/status`      | API identity / health summary             |
-| GET    | `/connections` | Current outgoing connection snapshot     |
-| GET    | `/blocked`     | Locally-marked blocked IPs from rules    |
-| GET    | `/trusted`     | Trusted IPs from rules                   |
-| GET    | `/alerts`      | Alerts (placeholder, currently empty)    |
+| Method | Path                   | Purpose                                          |
+| ------ | ---------------------- | ------------------------------------------------ |
+| GET    | `/status`              | API identity / health summary                    |
+| GET    | `/connections`         | Current outgoing connection snapshot             |
+| GET    | `/connections/summary` | Compact aggregate view of outgoing connections   |
+| GET    | `/blocked`             | Locally-marked blocked IPs from rules            |
+| GET    | `/trusted`             | Trusted IPs from rules                           |
+| GET    | `/alerts`              | Alerts (placeholder, currently empty)            |
 
 Each endpoint returns JSON. Collections use a stable `{"items": [...]}`
 shape so future schema additions stay backwards compatible. When data is
 not yet available (for example, alerts are not implemented yet), the
 response includes `"status": "not_available"` alongside an empty list.
+
+### `/connections/summary`
+
+`/connections/summary` is intended for Nova and other local tools that
+want to describe the network state at a glance without parsing the full
+connection list. It is **visibility only** — it does not, and never will,
+control the firewall, mutate rules, or take any action.
+
+Example payload:
+
+```json
+{
+  "total": 55,
+  "local": 38,
+  "known": 12,
+  "unknown": 5,
+  "blocked": 0,
+  "by_process": [
+    {"process": "firefox", "count": 8, "known": 6, "unknown": 2}
+  ],
+  "top_remote_hosts": [
+    {"ip": "93.184.216.34", "count": 3, "classification": "known"}
+  ]
+}
+```
+
+Notes:
+
+- Top-level counts use the same trust labels SilentGuard already applies
+  in the TUI (`local`, `known`, `unknown`, `blocked`). Trusted IPs from
+  the rules file are folded into `known`, matching the existing
+  classifier.
+- `by_process` groups connections by process name and is capped to a
+  small number of entries.
+- `top_remote_hosts` lists the most-frequent non-local remote IPs and is
+  also capped. Hostnames are not resolved (the API performs no DNS or
+  external network calls), so only the IP is reported.
+- When no connections can be enumerated (for example, if `psutil` lacks
+  permissions), the response carries zeros plus `"status": "not_available"`.
 
 ## Rules file (optional)
 
