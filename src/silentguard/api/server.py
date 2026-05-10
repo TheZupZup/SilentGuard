@@ -52,6 +52,8 @@ ROUTES: dict[str, ReadRoute] = {
     "/trusted": handlers.get_trusted,
     "/alerts": handlers.get_alerts,
     "/alerts/summary": handlers.get_alerts_summary,
+    "/events": handlers.get_events,
+    "/events/summary": handlers.get_events_summary,
     "/mitigation": handlers.get_mitigation,
 }
 

@@ -104,6 +104,8 @@ Endpoints:
 | GET    | `/trusted`                      | Trusted IPs from rules                           |
 | GET    | `/alerts`                       | Local flood / anomaly alerts (detection only)    |
 | GET    | `/alerts/summary`               | Compact alert counts by severity / type          |
+| GET    | `/events`                       | Persisted local event/alert history (read-only)  |
+| GET    | `/events/summary`               | Compact event-history summary by severity        |
 | GET    | `/mitigation`                   | Current mitigation mode, active temp blocks, audit tail |
 | POST   | `/mitigation/enable-temporary`  | Switch to opt-in `temporary_auto_block` mode (loopback only) |
 | POST   | `/mitigation/disable`           | Return to `detection_only` (loopback only)       |
@@ -280,6 +282,126 @@ does **not** include raw packet data, full process command lines,
 process environment variables, or PIDs / ports — see
 `silentguard/detection.py` for the schema and `connection_state.py`
 for the cache storage policy.
+
+### `/events` and `/events/summary` — local event history
+
+SilentGuard maintains a small, bounded, **local-only** event history at
+`~/.silentguard_events.json`. The history captures meaningful security
+and network state changes over time so consumers (notably Nova) can
+describe *what changed* without re-deriving state on every poll. It is
+read-only on the API surface and never triggers actions on its own.
+
+Tracked event types:
+
+- `unknown_connection_seen` (low) — a previously unknown remote
+  destination was observed.
+- `repeated_unknown_connection` (medium) — an unknown remote destination
+  has been observed enough times to cross the deterministic repeat
+  threshold; the same event row is promoted in place.
+- `possible_flood` (severity copied from the detection alert) —
+  recorded when `/alerts` surfaces a `possible_flood` alert. Coalesced
+  by source IP.
+- `mitigation_enabled` / `mitigation_disabled` (info) — recorded when
+  the mitigation mode flips into or out of `temporary_auto_block`.
+- `temporary_block_created` (medium) — recorded when a temporary
+  local block is added (manual or auto). Includes the IP and expiry.
+- `temporary_block_expired` (info) — recorded when a temporary local
+  block expires.
+- `trusted_ip_seen` (info) / `blocked_ip_seen` (medium) — recorded
+  when a trusted/blocked IP is observed in outgoing connections.
+
+Severity is one of `info`, `low`, `medium`, `high`, `critical` and is
+assigned **deterministically** from the event type (and, for
+`possible_flood`, from the detection alert that triggered it).
+SilentGuard never invents severities.
+
+What is **stored** for each event:
+
+- `id` — stable identifier for the event lifecycle.
+- `type` / `severity` / `status` (`active` or `resolved`).
+- `title` / `message` — short human-readable summaries.
+- `source` — name of the module that produced the event
+  (`connection_state`, `mitigation`, `detection`).
+- `remote_ip` / `process` — when applicable. Both are caps-limited.
+- `first_seen` / `last_seen` — UTC ISO timestamps.
+- `seen_count` — how many distinct observations contributed to the
+  event. Multiple concurrent sockets to one IP within one snapshot
+  count as a single observation.
+
+What is **not stored**, by design:
+
+- ❌ No PIDs, ports, or per-connection rows.
+- ❌ No process command lines or arguments.
+- ❌ No environment variables.
+- ❌ No raw socket internals or packet data.
+- ❌ No DNS lookups or remote hostnames sourced from the network.
+
+Storage is bounded — the on-disk file caps at the most recent
+`MAX_EVENTS` entries (currently 500), so the file size is
+contributor-friendly and the write path stays fast.
+
+`GET /events`:
+
+```json
+{
+  "items": [
+    {
+      "id": "evt_unknown_203.0.113.10",
+      "type": "repeated_unknown_connection",
+      "severity": "medium",
+      "title": "Repeated unknown connection",
+      "message": "An unknown remote destination was observed repeatedly.",
+      "source": "connection_state",
+      "remote_ip": "203.0.113.10",
+      "process": "firefox",
+      "first_seen": "2026-05-09T20:15:00Z",
+      "last_seen": "2026-05-09T20:20:00Z",
+      "seen_count": 7,
+      "status": "active"
+    }
+  ]
+}
+```
+
+`GET /events/summary`:
+
+```json
+{
+  "total": 3,
+  "active": 2,
+  "by_severity": {
+    "info": 0,
+    "low": 1,
+    "medium": 1,
+    "high": 0,
+    "critical": 0
+  },
+  "recent": [
+    {
+      "id": "evt_unknown_203.0.113.10",
+      "type": "repeated_unknown_connection",
+      "severity": "medium",
+      "title": "Repeated unknown connection",
+      "message": "An unknown remote destination was observed repeatedly.",
+      "remote_ip": "203.0.113.10",
+      "process": "firefox",
+      "seen_count": 7,
+      "last_seen": "2026-05-09T20:20:00Z"
+    }
+  ]
+}
+```
+
+If the store is unreadable, both endpoints degrade to a safe payload
+tagged `"status": "not_available"`.
+
+> **Important.** The event history is **visibility/history only**.
+> It does not block IPs, modify firewall rules, run privileged
+> commands, send notifications, or take any autonomous action.
+> The mitigation audit log (`~/.silentguard_mitigation_audit.json`)
+> remains the authoritative timeline for mitigation actions; the
+> event history references those actions but does not replace them.
+> Nova consumes events as **read-only context**.
 
 ### Opt-in flood mitigation (local, temporary, reversible)
 

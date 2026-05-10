@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from silentguard import detection, mitigation
+from silentguard import detection, events, mitigation
 from silentguard.connection_state import (
     CLASSIFICATION_PRIORITY,
     classification_from_label,
@@ -40,6 +40,8 @@ SUMMARY_PROCESS_LIMIT = 10
 SUMMARY_REMOTE_HOST_LIMIT = 10
 SUMMARY_RECENT_UNKNOWN_LIMIT = 5
 RECENT_UNKNOWN_LIMIT = 50
+EVENTS_LIST_LIMIT = 100
+EVENTS_SUMMARY_RECENT_LIMIT = 5
 
 _KNOWN_CLASSIFICATIONS = ("local", "known", "unknown", "trusted", "blocked")
 
@@ -133,6 +135,12 @@ def get_alerts() -> dict[str, Any]:
     example because ``psutil`` lacks permissions), the response degrades
     to ``{"items": [], "status": "not_available"}`` so consumers can
     distinguish "no alerts" from "could not check".
+
+    As a side effect, ``possible_flood`` alerts are also persisted to
+    the local event history (see :mod:`silentguard.events`) so the
+    ``/events`` and ``/events/summary`` endpoints can describe the
+    history of flood patterns over time. Other detection alert types
+    are not yet promoted to persistent history.
     """
     try:
         connections = get_outgoing_connections()
@@ -145,6 +153,11 @@ def get_alerts() -> dict[str, Any]:
     except Exception:
         LOGGER.exception("get_alerts: detection failed")
         return {"items": [], "status": "not_available"}
+
+    try:
+        events.record_detection_alerts(alerts)
+    except Exception:
+        LOGGER.debug("get_alerts: event-history sync skipped", exc_info=True)
 
     return {"items": [alert.to_dict() for alert in alerts]}
 
@@ -327,6 +340,68 @@ def get_recent_unknown() -> dict[str, Any]:
         return {"items": [], "status": "not_available"}
 
     return {"items": [_serialize_recent_unknown(entry) for entry in items]}
+
+
+# ---------------------------------------------------------------------------
+# Event history
+# ---------------------------------------------------------------------------
+
+
+def _empty_events_summary(status: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "total": 0,
+        "active": 0,
+        "by_severity": {severity: 0 for severity in events.SEVERITIES},
+        "recent": [],
+    }
+    if status:
+        payload["status"] = status
+    return payload
+
+
+def get_events() -> dict[str, Any]:
+    """Return persisted security/network events newest-first.
+
+    Read-only. Reads the local event-history store populated as a side
+    effect of monitor refreshes and mitigation lifecycle changes. The
+    list is capped to ``EVENTS_LIST_LIMIT`` so the response stays
+    bounded; the on-disk store itself is also bounded — see
+    :data:`silentguard.events.MAX_EVENTS`.
+
+    On read failure the response degrades gracefully to
+    ``{"items": [], "status": "not_available"}``.
+    """
+    try:
+        items = events.list_events(limit=EVENTS_LIST_LIMIT)
+    except Exception as exc:
+        LOGGER.warning("get_events: store unavailable: %s", exc)
+        return {"items": [], "status": "not_available"}
+    return {"items": items}
+
+
+def get_events_summary() -> dict[str, Any]:
+    """Return a compact summary of the local event-history store.
+
+    Shape (always present, even when empty)::
+
+        {
+            "total": <int>,
+            "active": <int>,
+            "by_severity": {"info": 0, "low": 0, "medium": 0,
+                             "high": 0, "critical": 0},
+            "recent": [<recent event recap>...],
+        }
+
+    Each entry in ``recent`` carries the minimal fields suggested by
+    the event-history feature spec (id, type, severity, title, message,
+    seen_count, last_seen, plus optional remote_ip / process). Read
+    failures degrade to a zeroed payload tagged ``"status": "not_available"``.
+    """
+    try:
+        return events.summary(recent_limit=EVENTS_SUMMARY_RECENT_LIMIT)
+    except Exception as exc:
+        LOGGER.warning("get_events_summary: store unavailable: %s", exc)
+        return _empty_events_summary(status="not_available")
 
 
 # ---------------------------------------------------------------------------
