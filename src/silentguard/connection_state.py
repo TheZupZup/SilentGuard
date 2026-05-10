@@ -286,7 +286,12 @@ def record_connections(
     counted_this_snapshot: set[str] = set()
     changed = False
 
-    for conn in connections:
+    # Snapshot once so the connections iterable can be replayed for
+    # the event-history sync below even if the caller passed a
+    # one-shot generator.
+    snapshot = list(connections)
+
+    for conn in snapshot:
         ip = str(getattr(conn, "remote_ip", "") or "").strip()
         if not ip:
             continue
@@ -329,6 +334,15 @@ def record_connections(
                 entry["classification"] = classification
                 entry["last_seen"] = now
                 changed = True
+
+    try:
+        from silentguard import events as _events
+
+        _events.record_connection_observations(snapshot)
+    except Exception:
+        LOGGER.debug(
+            "Skipping event-history sync due to error", exc_info=True
+        )
 
     if not changed:
         return

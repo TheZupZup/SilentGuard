@@ -472,6 +472,16 @@ def set_mode(
         },
         path=audit_path,
     )
+    try:
+        from silentguard import events as _events
+
+        _events.record_mitigation_mode_change(
+            mode, previous, actor=actor, now=now
+        )
+    except Exception:
+        LOGGER.debug(
+            "Skipping event history for mode change", exc_info=True
+        )
     return state
 
 
@@ -552,6 +562,17 @@ def expire_temp_blocks(
             },
             path=audit_path,
         )
+        try:
+            from silentguard import events as _events
+
+            _events.record_temporary_block_expired(
+                str(entry.get("ip") or ""), now=now
+            )
+        except Exception:
+            LOGGER.debug(
+                "Skipping event history for temp block expiry",
+                exc_info=True,
+            )
     return expired
 
 
@@ -675,6 +696,21 @@ def add_temporary_block(
         },
         path=audit_path,
     )
+    try:
+        from silentguard import events as _events
+
+        _events.record_temporary_block_created(
+            entry["ip"],
+            reason=entry.get("reason"),
+            expires_at=entry.get("expires_at"),
+            block_source=source,
+            now=timestamp_dt,
+        )
+    except Exception:
+        LOGGER.debug(
+            "Skipping event history for temp block creation",
+            exc_info=True,
+        )
     return True, dict(entry)
 
 
